@@ -1,26 +1,193 @@
 @import "tailwindcss";
 
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  --inv-base: #070a10;
+  --inv-surface: #0d1117;
+  --inv-elevated: #151b26;
+  --inv-overlay: #1a2230;
+  --inv-border: #243044;
+  --inv-border-subtle: #1a2433;
+  --inv-text: #f1f5f9;
+  --inv-text-secondary: #94a3b8;
+  --inv-text-muted: #64748b;
+  --inv-accent: #d97706;
+  --inv-accent-light: #f59e0b;
+  --inv-success: #22c55e;
+  --inv-danger: #ef4444;
+  --inv-warning: #f97316;
+  --inv-info: #3b82f6;
+  --inv-glow: rgba(217, 119, 6, 0.15);
 }
 
 @theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
+  --color-inv-base: var(--inv-base);
+  --color-inv-surface: var(--inv-surface);
+  --color-inv-elevated: var(--inv-elevated);
+  --color-inv-overlay: var(--inv-overlay);
+  --color-inv-border: var(--inv-border);
+  --color-inv-border-subtle: var(--inv-border-subtle);
+  --color-inv-text: var(--inv-text);
+  --color-inv-text-secondary: var(--inv-text-secondary);
+  --color-inv-text-muted: var(--inv-text-muted);
+  --color-inv-accent: var(--inv-accent);
+  --color-inv-accent-light: var(--inv-accent-light);
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--inv-border) transparent;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: var(--inv-base);
+  color: var(--inv-text);
+  font-family: var(--font-geist-sans), system-ui, sans-serif;
+}
+
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(1rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scale-in {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.animate-toast-in {
+  animation: toast-in 0.3s ease-out;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.2s ease-out;
+}
+
+.animate-scale-in {
+  animation: scale-in 0.25s ease-out;
+}
+
+.inv-card {
+  background: var(--inv-surface);
+  border: 1px solid var(--inv-border-subtle);
+  border-radius: 0.875rem;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 0 0 1px rgba(255, 255, 255, 0.02) inset;
+}
+
+.inv-card-hover {
+  transition: transform 0.2s ease, box-shadow 0.2s ease, border-color 0.2s ease;
+}
+
+.inv-card-hover:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+}
+
+.inv-input {
+  width: 100%;
+  padding: 0.625rem 1rem;
+  background: var(--inv-base);
+  border: 1px solid var(--inv-border);
+  border-radius: 0.625rem;
+  color: var(--inv-text);
+  font-size: 0.875rem;
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+
+.inv-input:focus {
+  outline: none;
+  border-color: var(--inv-accent);
+  box-shadow: 0 0 0 3px var(--inv-glow);
+}
+
+.inv-input::placeholder {
+  color: var(--inv-text-muted);
+}
+
+.inv-btn-primary {
+  background: linear-gradient(135deg, var(--inv-accent) 0%, var(--inv-accent-light) 100%);
+  color: white;
+  font-weight: 600;
+  border-radius: 0.625rem;
+  transition: opacity 0.15s, transform 0.15s;
+}
+
+.inv-btn-primary:hover:not(:disabled) {
+  opacity: 0.92;
+  transform: translateY(-1px);
+}
+
+.inv-btn-primary:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.inv-btn-ghost {
+  background: var(--inv-elevated);
+  color: var(--inv-text-secondary);
+  border: 1px solid var(--inv-border);
+  border-radius: 0.625rem;
+  transition: background 0.15s, color 0.15s;
+}
+
+.inv-btn-ghost:hover {
+  background: var(--inv-overlay);
+  color: var(--inv-text);
+}
+
+.inv-table th {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--inv-text-muted);
+}
+
+.inv-table tbody tr {
+  border-bottom: 1px solid var(--inv-border-subtle);
+  transition: background 0.15s;
+}
+
+.inv-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+/* Mejoras para móvil */
+@media (max-width: 768px) {
+  /* Evitar zoom en inputs en iOS */
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+  
+  /* Mejorar touch targets */
+  button, .clickable {
+    min-height: 44px;
+  }
+  
+  /* Scroll suave */
+  html {
+    scroll-behavior: smooth;
+  }
+  
+  /* Ocultar scrollbar en móvil pero mantener funcionalidad */
+  .overflow-auto {
+    -webkit-overflow-scrolling: touch;
+  }
 }

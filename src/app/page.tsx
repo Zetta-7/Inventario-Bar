@@ -1,11 +1,13 @@
 "use client";
 
 import { supabase } from "@/lib/supabase";
-import { useEffect, useState, useMemo, useCallback } from "react";
+import { useEffect, useState, useMemo, useCallback, createContext, useContext } from "react";
 import * as ExcelJS from "exceljs";
+import jsPDF from "jspdf";
+import autoTable from "jspdf-autotable";
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-  PieChart, Pie, Cell, LineChart, Line
+  PieChart, Pie, Cell, LineChart, Line, AreaChart, Area
 } from 'recharts';
 
 // ==================== TIPOS Y ENUMS ====================
@@ -14,6 +16,7 @@ type TipoMovimiento = 'entrada' | 'salida';
 type TipoReporte = 'todos' | 'entradas' | 'salidas';
 type EstadoStock = 'AGOTADO' | 'CRÍTICO' | 'BAJO' | 'ÓPTIMO';
 type Vista = "dashboard" | "inventario" | "movimientos";
+type Tema = "dark" | "light";
 
 type Producto = {
   id: number;
@@ -22,8 +25,10 @@ type Producto = {
   stock: number;
   stock_minimo: number;
   cantidad_base: number;
+  unidades_por_caja: number;  // NUEVO: cuántas unidades vienen por caja/paca
   ubicacion?: string;
   created_at?: string;
+  ultima_actualizacion?: string;
 };
 
 type Movimiento = {
@@ -37,6 +42,7 @@ type Movimiento = {
   factura?: string;
   notas?: string;
   created_at: string;
+  usuario?: string;
 };
 
 type Usuario = {
@@ -48,6 +54,15 @@ type Usuario = {
 type Notificacion = {
   tipo: 'success' | 'error' | 'warning' | 'info';
   mensaje: string;
+  id?: number;
+};
+
+type AccionHistorial = {
+  id: number;
+  usuario: string;
+  accion: string;
+  detalles: string;
+  fecha: string;
 };
 
 enum Categoria {
@@ -97,6 +112,14 @@ const CATEGORIA_EMOJI: Record<Categoria, string> = {
   [Categoria.Agua]: "💧",
 };
 
+// ==================== CONTEXTO DE TEMA ====================
+
+const TemaContext = createContext<{ tema: Tema; toggleTema: () => void }>({ tema: "dark", toggleTema: () => {} });
+
+export function useTema() {
+  return useContext(TemaContext);
+}
+
 // ==================== COMPONENTE DE NOTIFICACIONES ====================
 
 function NotificationToast({ notificacion, onClose }: { notificacion: Notificacion | null; onClose: () => void }) {
@@ -130,11 +153,11 @@ function NotificationToast({ notificacion, onClose }: { notificacion: Notificaci
   };
 
   return (
-    <div className="fixed top-20 right-6 z-50">
+    <div className="fixed top-20 right-6 z-50 animate-in slide-in-from-right-5 duration-300">
       <div className={`px-6 py-4 rounded-xl border backdrop-blur-md ${colors[notificacion.tipo]} shadow-2xl flex items-center gap-3 min-w-[300px]`}>
         <span className="text-2xl">{icons[notificacion.tipo]}</span>
         <p className="text-sm font-medium">{notificacion.mensaje}</p>
-        <button onClick={onClose} className="ml-auto text-slate-400 hover:text-white">✕</button>
+        <button onClick={onClose} className="ml-auto text-slate-400 hover:text-white transition-colors">✕</button>
       </div>
     </div>
   );
@@ -159,6 +182,13 @@ function formatFecha(fecha: string): string {
   });
 }
 
+function formatFechaCorta(fecha: string): string {
+  return new Date(fecha).toLocaleDateString("es-CO", { 
+    day: "numeric", 
+    month: "short"
+  });
+}
+
 function validateCantidad(cantidad: string): { valida: boolean; error?: string } {
   const num = parseInt(cantidad);
   if (!cantidad) return { valida: false, error: "La cantidad es requerida" };
@@ -170,6 +200,19 @@ function validateCantidad(cantidad: string): { valida: boolean; error?: string }
 function calcularPedidoSugerido(stock: number, cantidadBase: number): number {
   const deficit = cantidadBase - stock;
   return deficit > 0 ? deficit : 0;
+}
+
+// NUEVA FUNCIÓN: Calcular cajas necesarias
+function calcularCajasNecesarias(unidades: number, unidadesPorCaja: number): { cajas: number; resto: number } {
+  if (!unidadesPorCaja || unidadesPorCaja <= 0) return { cajas: 0, resto: unidades };
+  const cajas = Math.floor(unidades / unidadesPorCaja);
+  const resto = unidades % unidadesPorCaja;
+  return { cajas, resto };
+}
+
+function calcularDiasCobertura(stock: number, consumoPromedioDiario: number): number {
+  if (consumoPromedioDiario <= 0) return 999;
+  return Math.floor(stock / consumoPromedioDiario);
 }
 
 // ==================== LOGIN ====================
@@ -202,17 +245,17 @@ function LoginScreen({ onLogin }: { onLogin: (usuario: Usuario) => void }) {
   };
   
   return (
-    <div className="min-h-screen bg-[#0a0d16] flex items-center justify-center p-6">
-      <div className="w-full max-w-md">
+    <div className="min-h-screen bg-gradient-to-br from-[#0a0d16] to-[#141824] flex items-center justify-center p-6">
+      <div className="w-full max-w-md animate-in zoom-in-95 duration-500">
         <div className="text-center mb-10">
-          <div className="inline-flex items-center justify-center w-20 h-20 rounded-2xl bg-gradient-to-br from-amber-500 to-amber-600 mb-5 shadow-lg">
-            <span className="text-4xl">🍺</span>
+          <div className="inline-flex items-center justify-center w-24 h-24 rounded-3xl bg-gradient-to-br from-amber-500 to-amber-600 mb-6 shadow-2xl animate-bounce-slow">
+            <span className="text-5xl">🍺</span>
           </div>
-          <h1 className="text-3xl font-bold text-white tracking-tight">INVENTARIO</h1>
-          <p className="text-sm text-slate-500 mt-2">Sistema profesional de control de inventario</p>
+          <h1 className="text-4xl font-bold bg-gradient-to-r from-amber-400 to-amber-600 bg-clip-text text-transparent">INVENTARIO</h1>
+          <p className="text-sm text-slate-500 mt-3">Sistema profesional de control de inventario</p>
         </div>
         
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-2xl shadow-xl overflow-hidden">
+        <div className="bg-[#0f1117]/80 backdrop-blur-sm border border-[#2a2a3e] rounded-2xl shadow-2xl overflow-hidden">
           <div className="px-8 pt-8 pb-5 border-b border-[#2a2a3e]">
             <h2 className="text-xl font-semibold text-white">Iniciar sesión</h2>
             <p className="text-sm text-slate-500 mt-1">Ingresa tus credenciales para acceder al sistema</p>
@@ -220,7 +263,7 @@ function LoginScreen({ onLogin }: { onLogin: (usuario: Usuario) => void }) {
           
           <form onSubmit={handleLogin} className="px-8 pb-8 pt-6 space-y-6">
             {error && (
-              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4">
+              <div className="bg-red-500/10 border border-red-500/30 rounded-xl p-4 animate-shake">
                 <p className="text-sm text-red-400">{error}</p>
               </div>
             )}
@@ -232,7 +275,7 @@ function LoginScreen({ onLogin }: { onLogin: (usuario: Usuario) => void }) {
                 value={nombre} 
                 onChange={(e) => setNombre(e.target.value)} 
                 placeholder="Nombre de usuario" 
-                className="w-full px-4 py-3 bg-[#0a0d16] border border-[#2a2a3e] rounded-xl text-white text-base placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all"
+                className="w-full px-4 py-3 bg-[#0a0d16] border border-[#2a2a3e] rounded-xl text-white text-base placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all"
                 autoFocus 
               />
             </div>
@@ -244,14 +287,14 @@ function LoginScreen({ onLogin }: { onLogin: (usuario: Usuario) => void }) {
                 value={contrasena} 
                 onChange={(e) => setContrasena(e.target.value)} 
                 placeholder="••••••••" 
-                className="w-full px-4 py-3 bg-[#0a0d16] border border-[#2a2a3e] rounded-xl text-white text-base placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-1 focus:ring-amber-500 transition-all"
+                className="w-full px-4 py-3 bg-[#0a0d16] border border-[#2a2a3e] rounded-xl text-white text-base placeholder-slate-600 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all"
               />
             </div>
             
             <button 
               type="submit" 
               disabled={cargando} 
-              className="w-full py-3 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-2 text-base"
+              className="w-full py-3 bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 flex items-center justify-center gap-2 text-base shadow-lg"
             >
               {cargando ? (
                 <>
@@ -343,8 +386,8 @@ function ModalDetalle({ tipo, productos, onClose }: { tipo: string; productos: P
   const totalPedido = productosFiltrados.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={onClose}>
-      <div className="relative w-full max-w-5xl max-h-[85vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="relative w-full max-w-5xl max-h-[85vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-[#0f1117] border-b border-[#2a2a3e] p-6 flex justify-between items-center z-10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center text-2xl" style={{ background: `${color}20`, color }}>{icono}</div>
@@ -368,68 +411,80 @@ function ModalDetalle({ tipo, productos, onClose }: { tipo: string; productos: P
         </div>
 
         <div className="p-6">
-          <table className="w-full">
-            <thead className="border-b border-[#2a2a3e]">
-              <tr className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">
-                <th className="pb-4">Producto</th>
-                <th className="pb-4">Categoría</th>
-                <th className="pb-4 text-right">Stock Actual</th>
-                {tipo === "pedidos" && (
-                  <>
-                    <th className="pb-4 text-right">Cantidad Base</th>
-                    <th className="pb-4 text-right">Pedido Sugerido</th>
-                  </>
-                )}
-                {tipo !== "pedidos" && (
-                  <th className="pb-4 text-right">Stock Mínimo</th>
-                )}
-                <th className="pb-4 text-right">Ubicación</th>
-              </tr>
-            </thead>
-            <tbody>
-              {productosFiltrados.map((p, idx) => {
-                const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
-                return (
-                  <tr key={p.id} className="border-b border-[#1a1a2a]">
-                    <td className="py-3 text-white font-medium">{p.nombre}</td>
-                    <td className="py-3"><span className="text-xs px-3 py-1.5 rounded-full" style={{ background: CATEGORIA_BG[p.categoria], color: CATEGORIA_COLOR[p.categoria], border: `1px solid ${CATEGORIA_BORDER[p.categoria]}` }}>{CATEGORIA_EMOJI[p.categoria]} {p.categoria}</span></td>
-                    <td className="py-3 text-right text-xl font-bold" style={{ color }}>{p.stock}</td>
-                    {tipo === "pedidos" && (
-                      <>
-                        <td className="py-3 text-right text-lg font-semibold text-blue-400">{p.cantidad_base}</td>
-                        <td className="py-3 text-right text-lg font-bold" style={{ color: "#f97316" }}>{pedido}</td>
-                      </>
-                    )}
-                    {tipo !== "pedidos" && (
-                      <td className="py-3 text-right text-slate-400">{p.stock_minimo}</td>
-                    )}
-                    <td className="py-3 text-right text-slate-500">{p.ubicacion || "—"}</td>
-                  </tr>
-                );
-              })}
-              {productosFiltrados.length === 0 && (
-                <tr>
-                  <td colSpan={tipo === "pedidos" ? 6 : 5} className="text-center py-12 text-slate-500">
-                    {tipo === "pedidos" ? "No hay productos que necesiten pedido" : "No hay productos en esta categoría"}
-                  </td>
+          <div className="overflow-x-auto">
+            <table className="w-full">
+              <thead className="border-b border-[#2a2a3e]">
+                <tr className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wide">
+                  <th className="pb-4">Producto</th>
+                  <th className="pb-4">Categoría</th>
+                  <th className="pb-4 text-right">Stock Actual</th>
+                  {tipo === "pedidos" && (
+                    <>
+                      <th className="pb-4 text-right">Cantidad Base</th>
+                      <th className="pb-4 text-right">Unid./Caja</th>
+                      <th className="pb-4 text-right">Pedido (Cajas)</th>
+                    </>
+                  )}
+                  {tipo !== "pedidos" && (
+                    <th className="pb-4 text-right">Stock Mínimo</th>
+                  )}
+                  <th className="pb-4 text-right">Ubicación</th>
                 </tr>
-              )}
-            </tbody>
-          </table>
+              </thead>
+              <tbody>
+                {productosFiltrados.map((p, idx) => {
+                  const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
+                  const { cajas, resto } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
+                  const textoPedido = cajas > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''}${resto > 0 ? ` + ${resto} und` : ''}` : `${resto} und`;
+                  return (
+                    <tr key={p.id} className="border-b border-[#1a1a2a] hover:bg-[#1a1a2a] transition-colors">
+                      <td className="py-3 text-white font-medium">{p.nombre}</td>
+                      <td className="py-3"><span className="text-xs px-3 py-1.5 rounded-full" style={{ background: CATEGORIA_BG[p.categoria], color: CATEGORIA_COLOR[p.categoria], border: `1px solid ${CATEGORIA_BORDER[p.categoria]}` }}>{CATEGORIA_EMOJI[p.categoria]} {p.categoria}</span></td>
+                      <td className="py-3 text-right text-xl font-bold" style={{ color }}>{p.stock}</td>
+                      {tipo === "pedidos" && (
+                        <>
+                          <td className="py-3 text-right text-lg font-semibold text-blue-400">{p.cantidad_base}</td>
+                          <td className="py-3 text-right text-lg font-semibold text-purple-400">{p.unidades_por_caja || 1}</td>
+                          <td className="py-3 text-right text-lg font-bold" style={{ color: "#f97316" }}>{textoPedido}</td>
+                        </>
+                      )}
+                      {tipo !== "pedidos" && (
+                        <td className="py-3 text-right text-slate-400">{p.stock_minimo}</td>
+                      )}
+                      <td className="py-3 text-right text-slate-500">{p.ubicacion || "—"}</td>
+                    </tr>
+                  );
+                })}
+                {productosFiltrados.length === 0 && (
+                  <tr>
+                    <td colSpan={tipo === "pedidos" ? 7 : 5} className="text-center py-12 text-slate-500">
+                      {tipo === "pedidos" ? "No hay productos que necesiten pedido" : "No hay productos en esta categoría"}
+                    </td>
+                  </tr>
+                )}
+              </tbody>
+            </table>
+          </div>
         </div>
 
         {tipo === "pedidos" && productosFiltrados.length > 0 && (
           <div className="p-6 border-t border-[#2a2a3e] bg-[#0a0d16]">
-            <div className="flex justify-between items-center">
+            <div className="flex justify-between items-center flex-wrap gap-4">
               <div>
                 <span className="text-sm text-slate-400">Total de unidades a pedir: </span>
                 <span className="text-2xl font-bold text-orange-400">{totalPedido}</span>
               </div>
               <button 
                 onClick={() => {
-                  alert(`Pedido sugerido generado:\nTotal: ${totalPedido} unidades\nProductos: ${productosFiltrados.length}`);
+                  const pedidoText = productosFiltrados.map(p => {
+                    const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
+                    const { cajas, resto } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
+                    const texto = cajas > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''}${resto > 0 ? ` + ${resto} und` : ''}` : `${resto} und`;
+                    return `${p.nombre}: ${texto}`;
+                  }).join("\n");
+                  alert(`Pedido sugerido generado:\nTotal: ${totalPedido} unidades\n\n${pedidoText}`);
                 }}
-                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-600 text-white font-medium transition-all flex items-center gap-2"
+                className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-500 hover:to-orange-600 text-white font-medium transition-all flex items-center gap-2 shadow-lg"
               >
                 📋 Generar Orden de Pedido
               </button>
@@ -459,7 +514,22 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
       const fechaStr = fecha.toISOString().split('T')[0];
       const movimientosDia = movimientos.filter(m => m.created_at?.split('T')[0] === fechaStr);
       return { 
-        fecha: fechaStr, 
+        fecha: formatFechaCorta(fechaStr), 
+        entradas: movimientosDia.filter(m => m.tipo === "entrada").reduce((sum, m) => sum + m.cantidad, 0), 
+        salidas: movimientosDia.filter(m => m.tipo === "salida").reduce((sum, m) => sum + m.cantidad, 0) 
+      };
+    }).reverse();
+  }, [movimientos]);
+
+  const ultimos30Dias = useMemo(() => {
+    return Array.from({ length: 30 }, (_, i) => {
+      const fecha = new Date();
+      fecha.setDate(fecha.getDate() - i);
+      fecha.setHours(0, 0, 0, 0);
+      const fechaStr = fecha.toISOString().split('T')[0];
+      const movimientosDia = movimientos.filter(m => m.created_at?.split('T')[0] === fechaStr);
+      return { 
+        fecha: formatFechaCorta(fechaStr), 
         entradas: movimientosDia.filter(m => m.tipo === "entrada").reduce((sum, m) => sum + m.cantidad, 0), 
         salidas: movimientosDia.filter(m => m.tipo === "salida").reduce((sum, m) => sum + m.cantidad, 0) 
       };
@@ -473,7 +543,7 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
     }).sort((a, b) => b.salidas - a.salidas).slice(0, 10);
   }, [productos, movimientos]);
 
-  const COLORS = ['#fbbf24', '#60a5fa', '#c084fc', '#4ade80', '#f472b6', '#f97316'];
+  const COLORS = ['#fbbf24', '#60a5fa', '#c084fc', '#4ade80', '#f472b6', '#f97316', '#a855f7', '#ec4899', '#14b8a6', '#f43f5e'];
   
   const rotacionInventario = useMemo(() => {
     const salidasUltimoMes = movimientos
@@ -484,34 +554,148 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
     return promedioInventario > 0 ? (salidasUltimoMes / promedioInventario).toFixed(2) : "0";
   }, [movimientos, productos]);
 
+  const consumoPromedioDiario = useMemo(() => {
+    const salidasUltimoMes = movimientos
+      .filter(m => m.tipo === 'salida' && 
+        new Date(m.created_at) > new Date(Date.now() - 30 * 24 * 60 * 60 * 1000))
+      .reduce((sum, m) => sum + m.cantidad, 0);
+    return salidasUltimoMes / 30;
+  }, [movimientos]);
+
+  const valorInventario = useMemo(() => {
+    // Esto es un estimado - idealmente tendrías precios en la DB
+    return productos.reduce((sum, p) => sum + (p.stock * 15000), 0);
+  }, [productos]);
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={onClose}>
-      <div className="relative w-full max-w-6xl max-h-[90vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="relative w-full max-w-6xl max-h-[90vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] p-6 shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-6 sticky top-0 bg-[#0f1117] z-10 pb-4 border-b border-[#2a2a3e]">
-          <h2 className="text-2xl font-bold text-white">📊 Estadísticas y Análisis</h2>
+          <h2 className="text-2xl font-bold bg-gradient-to-r from-amber-400 to-amber-600 bg-clip-text text-transparent">📊 Estadísticas y Análisis</h2>
           <button onClick={onClose} className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xl transition-all flex items-center justify-center">✕</button>
         </div>
         
-        <div className="grid grid-cols-2 gap-4 mb-8">
-          <div className="bg-[#0a0d16] rounded-xl p-4 text-center border border-[#2a2a3e]">
-            <div className="text-2xl font-bold text-amber-400">{rotacionInventario}</div>
-            <div className="text-xs text-slate-500">Rotación de Inventario (30 días)</div>
+        {/* Métricas clave */}
+        <div className="grid grid-cols-4 gap-4 mb-8">
+          <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-xl p-4 text-center border border-blue-500/30">
+            <div className="text-2xl font-bold text-blue-400">{rotacionInventario}x</div>
+            <div className="text-xs text-slate-500">Rotación (30 días)</div>
           </div>
-          <div className="bg-[#0a0d16] rounded-xl p-4 text-center border border-[#2a2a3e]">
-            <div className="text-2xl font-bold text-blue-400">{movimientos.length}</div>
+          <div className="bg-gradient-to-br from-green-500/10 to-green-600/5 rounded-xl p-4 text-center border border-green-500/30">
+            <div className="text-2xl font-bold text-green-400">{consumoPromedioDiario.toFixed(1)}</div>
+            <div className="text-xs text-slate-500">Consumo diario promedio</div>
+          </div>
+          <div className="bg-gradient-to-br from-purple-500/10 to-purple-600/5 rounded-xl p-4 text-center border border-purple-500/30">
+            <div className="text-2xl font-bold text-purple-400">{movimientos.length}</div>
             <div className="text-xs text-slate-500">Total Movimientos</div>
+          </div>
+          <div className="bg-gradient-to-br from-amber-500/10 to-amber-600/5 rounded-xl p-4 text-center border border-amber-500/30">
+            <div className="text-2xl font-bold text-amber-400">${(valorInventario / 1000000).toFixed(1)}M</div>
+            <div className="text-xs text-slate-500">Valor estimado inventario</div>
           </div>
         </div>
         
-        <div className="mb-8"><h3 className="text-base font-semibold text-slate-300 mb-4">Stock por Categoría</h3><div style={{ height: 400 }}><ResponsiveContainer><BarChart data={consumoPorCategoria}><CartesianGrid stroke="#2a2a3e" /><XAxis dataKey="name" stroke="#94a3b8" fontSize={12} /><YAxis stroke="#94a3b8" fontSize={12} /><Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} /><Legend /><Bar dataKey="stock" name="Stock Actual" fill="#22c55e" radius={[8,8,0,0]} /></BarChart></ResponsiveContainer></div></div>
+        {/* Gráfico de stock por categoría */}
+        <div className="mb-8">
+          <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">📊 Stock por Categoría</h3>
+          <div style={{ height: 400 }}>
+            <ResponsiveContainer>
+              <BarChart data={consumoPorCategoria}>
+                <CartesianGrid stroke="#2a2a3e" strokeDasharray="3 3" />
+                <XAxis dataKey="name" stroke="#94a3b8" fontSize={12} />
+                <YAxis stroke="#94a3b8" fontSize={12} />
+                <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} />
+                <Legend />
+                <Bar dataKey="stock" name="Stock Actual" fill="#22c55e" radius={[8,8,0,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
         
-        <div className="mb-8"><h3 className="text-base font-semibold text-slate-300 mb-4">Movimientos Últimos 7 Días</h3><div style={{ height: 400 }}><ResponsiveContainer><LineChart data={ultimos7Dias}><CartesianGrid stroke="#2a2a3e" /><XAxis dataKey="fecha" stroke="#94a3b8" fontSize={12} /><YAxis stroke="#94a3b8" fontSize={12} /><Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} /><Legend /><Line type="monotone" dataKey="entradas" name="Entradas" stroke="#22c55e" strokeWidth={3} dot={{ r: 6, fill: "#22c55e" }} /><Line type="monotone" dataKey="salidas" name="Salidas" stroke="#ef4444" strokeWidth={3} dot={{ r: 6, fill: "#ef4444" }} /></LineChart></ResponsiveContainer></div></div>
+        {/* Gráfico de evolución 30 días */}
+        <div className="mb-8">
+          <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">📈 Evolución últimos 30 días</h3>
+          <div style={{ height: 400 }}>
+            <ResponsiveContainer>
+              <AreaChart data={ultimos30Dias}>
+                <CartesianGrid stroke="#2a2a3e" strokeDasharray="3 3" />
+                <XAxis dataKey="fecha" stroke="#94a3b8" fontSize={10} interval={5} />
+                <YAxis stroke="#94a3b8" fontSize={12} />
+                <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} />
+                <Legend />
+                <Area type="monotone" dataKey="entradas" name="Entradas" stackId="1" stroke="#22c55e" fill="#22c55e" fillOpacity={0.3} />
+                <Area type="monotone" dataKey="salidas" name="Salidas" stackId="1" stroke="#ef4444" fill="#ef4444" fillOpacity={0.3} />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
         
-        <div className="mb-8"><h3 className="text-base font-semibold text-slate-300 mb-4">Top 10 Productos más Vendidos</h3><div style={{ height: 450 }}><ResponsiveContainer><BarChart data={topProductos} layout="vertical"><CartesianGrid stroke="#2a2a3e" /><XAxis type="number" stroke="#94a3b8" fontSize={12} /><YAxis type="category" dataKey="nombre" stroke="#94a3b8" fontSize={12} width={160} /><Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} /><Legend /><Bar dataKey="salidas" name="Unidades Vendidas" fill="#f97316" radius={[0,8,8,0]} /><Bar dataKey="stock" name="Stock Actual" fill="#22c55e" radius={[0,8,8,0]} /></BarChart></ResponsiveContainer></div></div>
+        {/* Movimientos últimos 7 días */}
+        <div className="mb-8">
+          <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">🔄 Movimientos últimos 7 días</h3>
+          <div style={{ height: 400 }}>
+            <ResponsiveContainer>
+              <LineChart data={ultimos7Dias}>
+                <CartesianGrid stroke="#2a2a3e" strokeDasharray="3 3" />
+                <XAxis dataKey="fecha" stroke="#94a3b8" fontSize={12} />
+                <YAxis stroke="#94a3b8" fontSize={12} />
+                <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} />
+                <Legend />
+                <Line type="monotone" dataKey="entradas" name="Entradas" stroke="#22c55e" strokeWidth={3} dot={{ r: 6, fill: "#22c55e" }} />
+                <Line type="monotone" dataKey="salidas" name="Salidas" stroke="#ef4444" strokeWidth={3} dot={{ r: 6, fill: "#ef4444" }} />
+              </LineChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
         
-        <div className="mb-6"><h3 className="text-base font-semibold text-slate-300 mb-4">Distribución de Stock por Categoría</h3><div style={{ height: 450 }}><ResponsiveContainer><PieChart><Pie data={consumoPorCategoria} cx="50%" cy="50%" labelLine={true} label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`} outerRadius={160} fill="#8884d8" dataKey="stock">{consumoPorCategoria.map((entry, index) => (<Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />))}</Pie><Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} /><Legend /></PieChart></ResponsiveContainer></div></div>
+        {/* Top 10 productos más vendidos */}
+        <div className="mb-8">
+          <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">🏆 Top 10 productos más vendidos</h3>
+          <div style={{ height: 500 }}>
+            <ResponsiveContainer>
+              <BarChart data={topProductos} layout="vertical">
+                <CartesianGrid stroke="#2a2a3e" strokeDasharray="3 3" />
+                <XAxis type="number" stroke="#94a3b8" fontSize={12} />
+                <YAxis type="category" dataKey="nombre" stroke="#94a3b8" fontSize={10} width={140} />
+                <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} />
+                <Legend />
+                <Bar dataKey="salidas" name="Unidades Vendidas" fill="#f97316" radius={[0,8,8,0]} />
+                <Bar dataKey="stock" name="Stock Actual" fill="#22c55e" radius={[0,8,8,0]} />
+              </BarChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
         
-        <div className="flex justify-end pt-4"><button onClick={onClose} className="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium transition-all">Cerrar</button></div>
+        {/* Distribución por categoría */}
+        <div className="mb-6">
+          <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">🥧 Distribución de Stock por Categoría</h3>
+          <div style={{ height: 450 }}>
+            <ResponsiveContainer>
+              <PieChart>
+                <Pie 
+                  data={consumoPorCategoria} 
+                  cx="50%" 
+                  cy="50%" 
+                  labelLine={true} 
+                  label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`} 
+                  outerRadius={160} 
+                  fill="#8884d8" 
+                  dataKey="stock"
+                >
+                  {consumoPorCategoria.map((entry, index) => (
+                    <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
+                  ))}
+                </Pie>
+                <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} />
+                <Legend />
+              </PieChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+        
+        <div className="flex justify-end pt-4">
+          <button onClick={onClose} className="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium transition-all">Cerrar</button>
+        </div>
       </div>
     </div>
   );
@@ -523,6 +707,7 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
   const [tipoReporte, setTipoReporte] = useState<TipoReporte>("todos");
   const [productoFiltro, setProductoFiltro] = useState<string>("");
   const [exportando, setExportando] = useState(false);
+  const [formatoExportacion, setFormatoExportacion] = useState<"excel" | "pdf">("excel");
 
   const movimientosFiltrados = useMemo(() => {
     return movimientos.filter(m => {
@@ -534,15 +719,23 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
     });
   }, [movimientos, fechaInicio, fechaFin, tipoReporte, productoFiltro]);
 
-  const exportarReporte = async () => {
+  const exportarExcel = async () => {
     setExportando(true);
     try {
       const wb = new ExcelJS.Workbook();
       const sh = wb.addWorksheet("Reporte_Movimientos");
-      const headerRow = sh.addRow(["Fecha", "Producto", "Categoría", "Tipo", "Cantidad", "Motivo", "Notas"]);
-      headerRow.font = { bold: true, size: 12 };
-      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1f2937" } };
-      headerRow.font = { bold: true, color: { argb: "FFFFFFFF" } };
+      
+      // Estilos
+      const headerStyle = {
+        font: { bold: true, size: 12, color: { argb: "FFFFFFFF" } },
+        fill: { type: "pattern" as const, pattern: "solid", fgColor: { argb: "FF1f2937" } }
+      };
+      
+      const headerRow = sh.addRow(["Fecha", "Producto", "Categoría", "Tipo", "Cantidad", "Motivo", "Notas", "Usuario"]);
+      headerRow.eachCell(cell => {
+        cell.font = headerStyle.font;
+        cell.fill = headerStyle.fill;
+      });
       
       movimientosFiltrados.forEach(m => {
         const prod = productos.find(p => p.id === m.producto_id);
@@ -553,11 +746,23 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
           m.tipo === "entrada" ? "Ingreso" : "Salida", 
           m.cantidad, 
           m.motivo || "-", 
-          m.notas || "-"
+          m.notas || "-",
+          (m as any).usuario || "-"
         ]);
       });
       
-      sh.columns = [{ width: 20 }, { width: 35 }, { width: 18 }, { width: 12 }, { width: 12 }, { width: 25 }, { width: 35 }];
+      sh.columns = [{ width: 20 }, { width: 35 }, { width: 18 }, { width: 12 }, { width: 12 }, { width: 25 }, { width: 35 }, { width: 15 }];
+      
+      // Resumen
+      sh.addRow([]);
+      const resumenRow = sh.addRow(["RESUMEN DEL PERÍODO"]);
+      resumenRow.font = { bold: true, size: 14 };
+      sh.addRow([`Total movimientos: ${movimientosFiltrados.length}`]);
+      sh.addRow([`Total entradas: ${movimientosFiltrados.filter(m => m.tipo === "entrada").reduce((s, m) => s + m.cantidad, 0)} unidades`]);
+      sh.addRow([`Total salidas: ${movimientosFiltrados.filter(m => m.tipo === "salida").reduce((s, m) => s + m.cantidad, 0)} unidades`]);
+      sh.addRow([`Período: ${fechaInicio} al ${fechaFin}`]);
+      sh.addRow([`Generado: ${new Date().toLocaleString("es-CO")}`]);
+      
       const buf = await wb.xlsx.writeBuffer();
       const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
       const url = window.URL.createObjectURL(blob);
@@ -574,23 +779,127 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
     }
   };
 
+  const exportarPDF = async () => {
+    setExportando(true);
+    try {
+      const doc = new jsPDF();
+      
+      // Título
+      doc.setFontSize(18);
+      doc.setTextColor(251, 191, 36);
+      doc.text("Reporte de Movimientos de Inventario", 14, 20);
+      
+      doc.setFontSize(10);
+      doc.setTextColor(100);
+      doc.text(`Período: ${fechaInicio} al ${fechaFin}`, 14, 30);
+      doc.text(`Generado: ${new Date().toLocaleString("es-CO")}`, 14, 36);
+      
+      // Resumen
+      doc.setFontSize(12);
+      doc.setTextColor(0);
+      doc.text("Resumen:", 14, 48);
+      doc.setFontSize(10);
+      doc.text(`Total movimientos: ${movimientosFiltrados.length}`, 20, 56);
+      doc.text(`Total entradas: ${movimientosFiltrados.filter(m => m.tipo === "entrada").reduce((s, m) => s + m.cantidad, 0)} unidades`, 20, 62);
+      doc.text(`Total salidas: ${movimientosFiltrados.filter(m => m.tipo === "salida").reduce((s, m) => s + m.cantidad, 0)} unidades`, 20, 68);
+      
+      // Tabla de movimientos
+      const tableData = movimientosFiltrados.slice(0, 100).map(m => {
+        const prod = productos.find(p => p.id === m.producto_id);
+        return [
+          formatFecha(m.created_at),
+          prod?.nombre || "?",
+          m.tipo === "entrada" ? "Ingreso" : "Salida",
+          m.cantidad.toString(),
+          m.motivo || "-"
+        ];
+      });
+      
+      autoTable(doc, {
+        startY: 80,
+        head: [["Fecha", "Producto", "Tipo", "Cantidad", "Motivo"]],
+        body: tableData,
+        theme: "striped",
+        headStyles: { fillColor: [251, 191, 36], textColor: [0, 0, 0], fontStyle: "bold" },
+        styles: { fontSize: 8, cellPadding: 2 },
+        margin: { left: 14, right: 14 }
+      });
+      
+      if (movimientosFiltrados.length > 100) {
+        doc.text(`* Mostrando los primeros 100 de ${movimientosFiltrados.length} movimientos`, 14, (doc as any).lastAutoTable.finalY + 10);
+      }
+      
+      doc.save(`reporte_inventario_${fechaInicio}_a_${fechaFin}.pdf`);
+    } catch (error) {
+      console.error("Error al exportar PDF:", error);
+      alert("Error al generar el PDF");
+    } finally {
+      setExportando(false);
+    }
+  };
+
+  const handleExportar = () => {
+    if (formatoExportacion === "excel") {
+      exportarExcel();
+    } else {
+      exportarPDF();
+    }
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={onClose}>
-      <div className="relative w-full max-w-4xl max-h-[90vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="relative w-full max-w-4xl max-h-[90vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] p-6 shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
         <div className="flex justify-between items-center mb-6 sticky top-0 bg-[#0f1117] z-10 pb-4 border-b border-[#2a2a3e]">
-          <h2 className="text-2xl font-bold text-white">📋 Generar Reporte Avanzado</h2>
+          <h2 className="text-2xl font-bold bg-gradient-to-r from-amber-400 to-amber-600 bg-clip-text text-transparent">📋 Generar Reporte Avanzado</h2>
           <button onClick={onClose} className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xl transition-all flex items-center justify-center">✕</button>
         </div>
         
         <div className="grid grid-cols-3 gap-5 mb-6">
-          <div><label className="block text-sm font-medium text-slate-400 mb-2">Fecha Inicio</label><input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" /></div>
-          <div><label className="block text-sm font-medium text-slate-400 mb-2">Fecha Fin</label><input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" /></div>
-          <div><label className="block text-sm font-medium text-slate-400 mb-2">Tipo de Movimiento</label><select value={tipoReporte} onChange={(e) => setTipoReporte(e.target.value as TipoReporte)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500"><option value="todos">Todos</option><option value="entradas">Solo Entradas</option><option value="salidas">Solo Salidas</option></select></div>
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-2">Fecha Inicio</label>
+            <input type="date" value={fechaInicio} onChange={(e) => setFechaInicio(e.target.value)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-2">Fecha Fin</label>
+            <input type="date" value={fechaFin} onChange={(e) => setFechaFin(e.target.value)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20" />
+          </div>
+          <div>
+            <label className="block text-sm font-medium text-slate-400 mb-2">Tipo de Movimiento</label>
+            <select value={tipoReporte} onChange={(e) => setTipoReporte(e.target.value as TipoReporte)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500">
+              <option value="todos">Todos</option>
+              <option value="entradas">Solo Entradas</option>
+              <option value="salidas">Solo Salidas</option>
+            </select>
+          </div>
         </div>
         
-        <div className="mb-6"><label className="block text-sm font-medium text-slate-400 mb-2">Filtrar por Producto (opcional)</label><select value={productoFiltro} onChange={(e) => setProductoFiltro(e.target.value)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500"><option value="">Todos los productos</option>{productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}</select></div>
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-slate-400 mb-2">Filtrar por Producto (opcional)</label>
+          <select value={productoFiltro} onChange={(e) => setProductoFiltro(e.target.value)} className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500">
+            <option value="">Todos los productos</option>
+            {productos.map(p => <option key={p.id} value={p.id}>{p.nombre}</option>)}
+          </select>
+        </div>
         
-        <div className="mb-6 p-4 rounded-xl bg-amber-500/10 border border-amber-500/30">
+        <div className="mb-6">
+          <label className="block text-sm font-medium text-slate-400 mb-2">Formato de Exportación</label>
+          <div className="flex gap-3">
+            <button 
+              onClick={() => setFormatoExportacion("excel")}
+              className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 ${formatoExportacion === "excel" ? 'bg-gradient-to-r from-green-600 to-green-500 text-white shadow-md' : 'bg-[#0a0d16] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}
+            >
+              📊 Excel
+            </button>
+            <button 
+              onClick={() => setFormatoExportacion("pdf")}
+              className={`flex-1 py-3 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 ${formatoExportacion === "pdf" ? 'bg-gradient-to-r from-red-600 to-red-500 text-white shadow-md' : 'bg-[#0a0d16] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}
+            >
+              📄 PDF
+            </button>
+          </div>
+        </div>
+        
+        <div className="mb-6 p-4 rounded-xl bg-gradient-to-r from-amber-500/10 to-orange-500/10 border border-amber-500/30">
           <p className="text-sm text-amber-300">
             📊 Resumen del reporte: {movimientosFiltrados.length} movimientos encontrados | 
             ↑ Entradas: {movimientosFiltrados.filter(m => m.tipo === "entrada").reduce((s, m) => s + m.cantidad, 0)} unidades | 
@@ -600,14 +909,14 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
         
         <div className="flex gap-4 justify-end pt-4">
           <button onClick={onClose} className="px-6 py-2.5 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium transition-all">Cancelar</button>
-          <button onClick={exportarReporte} disabled={exportando} className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-medium transition-all flex items-center gap-2">
+          <button onClick={handleExportar} disabled={exportando} className="px-6 py-2.5 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-medium transition-all flex items-center gap-2 shadow-lg">
             {exportando ? (
               <>
                 <div className="animate-spin rounded-full h-4 w-4 border-2 border-white border-t-transparent"></div>
                 Exportando...
               </>
             ) : (
-              <>📥 Exportar a Excel</>
+              <>📥 Exportar a {formatoExportacion.toUpperCase()}</>
             )}
           </button>
         </div>
@@ -626,15 +935,17 @@ type ModalAdminProductosProps = {
 };
 
 function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNotificacion }: ModalAdminProductosProps) {
-  const [modo, setModo] = useState<"agregar" | "eliminar">("agregar");
+  const [modo, setModo] = useState<"agregar" | "eliminar" | "editar">("agregar");
   const [nombre, setNombre] = useState("");
   const [categoria, setCategoria] = useState<Categoria>(Categoria.Cervezas);
   const [stock, setStock] = useState("");
   const [stockMinimo, setStockMinimo] = useState("");
   const [cantidadBase, setCantidadBase] = useState("");
+  const [unidadesPorCaja, setUnidadesPorCaja] = useState(""); // NUEVO
   const [ubicacion, setUbicacion] = useState("");
   const [cargando, setCargando] = useState(false);
   const [productoAEliminar, setProductoAEliminar] = useState<number | null>(null);
+  const [productoAEditar, setProductoAEditar] = useState<Producto | null>(null);
   const [errorDetalle, setErrorDetalle] = useState<string>("");
 
   const handleAgregar = async () => {
@@ -662,6 +973,12 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
       setErrorDetalle(`❌ Cantidad base: ${cantidadBaseValid.error}`);
       return;
     }
+    
+    const unidadesPorCajaValid = validateCantidad(unidadesPorCaja);
+    if (!unidadesPorCajaValid.valida) {
+      setErrorDetalle(`❌ Unidades por caja: ${unidadesPorCajaValid.error}`);
+      return;
+    }
 
     setCargando(true);
     
@@ -672,6 +989,7 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
         stock: parseInt(stock),
         stock_minimo: parseInt(stockMinimo),
         cantidad_base: parseInt(cantidadBase),
+        unidades_por_caja: parseInt(unidadesPorCaja) || 1,
         ubicacion: ubicacion || null,
       };
       
@@ -695,12 +1013,56 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
         setStock("");
         setStockMinimo("");
         setCantidadBase("");
+        setUnidadesPorCaja("");
         setUbicacion("");
         setErrorDetalle("");
       }
     } catch (err: any) {
       console.error("Error inesperado:", err);
       setErrorDetalle(`❌ Error inesperado: ${err.message || "Desconocido"}`);
+    } finally {
+      setCargando(false);
+    }
+  };
+
+  const handleEditar = async () => {
+    if (!productoAEditar) return;
+    
+    setCargando(true);
+    setErrorDetalle("");
+    
+    try {
+      const updates: Partial<Producto> = {};
+      if (nombre && nombre !== productoAEditar.nombre) updates.nombre = nombre;
+      if (categoria !== productoAEditar.categoria) updates.categoria = categoria;
+      if (stock) updates.stock = parseInt(stock);
+      if (stockMinimo) updates.stock_minimo = parseInt(stockMinimo);
+      if (cantidadBase) updates.cantidad_base = parseInt(cantidadBase);
+      if (unidadesPorCaja) updates.unidades_por_caja = parseInt(unidadesPorCaja);
+      if (ubicacion !== productoAEditar.ubicacion) updates.ubicacion = ubicacion || null;
+      
+      if (Object.keys(updates).length === 0) {
+        setErrorDetalle("❌ No se realizaron cambios");
+        setCargando(false);
+        return;
+      }
+      
+      const { error } = await supabase
+        .from("productos")
+        .update(updates)
+        .eq("id", productoAEditar.id);
+      
+      if (error) {
+        setErrorDetalle(`❌ Error al editar: ${error.message}`);
+      } else {
+        mostrarNotificacion('success', `✅ Producto "${productoAEditar.nombre}" actualizado correctamente`);
+        onProductoCreado();
+        setModo("agregar");
+        setProductoAEditar(null);
+        limpiarFormulario();
+      }
+    } catch (err: any) {
+      setErrorDetalle(`❌ Error inesperado: ${err.message}`);
     } finally {
       setCargando(false);
     }
@@ -746,38 +1108,66 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
     }
   };
 
+  const limpiarFormulario = () => {
+    setNombre("");
+    setCategoria(Categoria.Cervezas);
+    setStock("");
+    setStockMinimo("");
+    setCantidadBase("");
+    setUnidadesPorCaja("");
+    setUbicacion("");
+    setErrorDetalle("");
+  };
+
+  const seleccionarProductoEditar = (producto: Producto) => {
+    setProductoAEditar(producto);
+    setNombre(producto.nombre);
+    setCategoria(producto.categoria);
+    setStock(producto.stock.toString());
+    setStockMinimo(producto.stock_minimo.toString());
+    setCantidadBase(producto.cantidad_base.toString());
+    setUnidadesPorCaja(producto.unidades_por_caja?.toString() || "1");
+    setUbicacion(producto.ubicacion || "");
+  };
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={onClose}>
-      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] shadow-2xl" onClick={(e) => e.stopPropagation()}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="relative w-full max-w-2xl max-h-[90vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
         <div className="sticky top-0 bg-[#0f1117] border-b border-[#2a2a3e] p-6 flex justify-between items-center z-10">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl flex items-center justify-center text-2xl bg-amber-500/20">🛠️</div>
             <div>
               <h2 className="text-xl font-bold text-white">Administrar Productos</h2>
-              <p className="text-sm text-slate-500">Agrega o elimina productos del inventario</p>
+              <p className="text-sm text-slate-500">Agrega, edita o elimina productos del inventario</p>
             </div>
           </div>
           <button onClick={onClose} className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xl transition-all flex items-center justify-center">✕</button>
         </div>
 
         {errorDetalle && (
-          <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30">
+          <div className="mx-6 mt-4 p-3 rounded-xl bg-red-500/10 border border-red-500/30 animate-shake">
             <p className="text-sm text-red-400">{errorDetalle}</p>
           </div>
         )}
 
         <div className="flex mx-6 mt-6 bg-[#0a0d16] rounded-xl p-1 gap-1">
           <button 
-            onClick={() => { setModo("agregar"); setErrorDetalle(""); }} 
+            onClick={() => { setModo("agregar"); limpiarFormulario(); setErrorDetalle(""); }} 
             className={`flex-1 py-3 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${modo === "agregar" ? 'bg-gradient-to-r from-green-600 to-green-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800'}`}
           >
-            ➕ Agregar Producto
+            ➕ Agregar
+          </button>
+          <button 
+            onClick={() => { setModo("editar"); limpiarFormulario(); setErrorDetalle(""); }} 
+            className={`flex-1 py-3 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${modo === "editar" ? 'bg-gradient-to-r from-blue-600 to-blue-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800'}`}
+          >
+            ✏️ Editar
           </button>
           <button 
             onClick={() => { setModo("eliminar"); setErrorDetalle(""); }} 
             className={`flex-1 py-3 rounded-lg text-sm font-semibold transition-all flex items-center justify-center gap-2 ${modo === "eliminar" ? 'bg-gradient-to-r from-red-600 to-red-500 text-white shadow-md' : 'text-slate-400 hover:bg-slate-800'}`}
           >
-            🗑️ Eliminar Producto
+            🗑️ Eliminar
           </button>
         </div>
 
@@ -791,7 +1181,7 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
                   value={nombre} 
                   onChange={(e) => setNombre(e.target.value)} 
                   placeholder="Ej: Corona Extra, Coca-Cola, Agua Mineral" 
-                  className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" 
+                  className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20" 
                   autoFocus
                 />
               </div>
@@ -848,6 +1238,23 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
                 <p className="text-xs text-slate-500 mt-1">Ej: Si siempre necesitas 100 cervezas, pon 100</p>
               </div>
 
+              {/* NUEVO CAMPO: Unidades por Caja */}
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">
+                  📦 Unidades por Caja / Paca *
+                </label>
+                <input 
+                  type="number" 
+                  value={unidadesPorCaja} 
+                  onChange={(e) => setUnidadesPorCaja(e.target.value)} 
+                  placeholder="Ej: 12, 6, 24" 
+                  className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" 
+                />
+                <p className="text-xs text-slate-500 mt-1">
+                  ¿Cuántas unidades vienen en una caja/paca? Ej: Coca-Cola = 12, Agua = 24, Cerveza = 6, Soda = 6
+                </p>
+              </div>
+
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-2">Ubicación</label>
                 <input 
@@ -862,8 +1269,8 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
               <div className="pt-4">
                 <button 
                   onClick={handleAgregar} 
-                  disabled={cargando || !nombre || !stock || !stockMinimo || !cantidadBase} 
-                  className="w-full py-3 rounded-xl bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-600 text-white font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2"
+                  disabled={cargando || !nombre || !stock || !stockMinimo || !cantidadBase || !unidadesPorCaja} 
+                  className="w-full py-3 rounded-xl bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-600 text-white font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg"
                 >
                   {cargando ? (
                     <>
@@ -873,6 +1280,106 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
                   ) : "➕ AGREGAR PRODUCTO"}
                 </button>
               </div>
+            </div>
+          ) : modo === "editar" ? (
+            <div className="space-y-4">
+              <div>
+                <label className="block text-sm font-medium text-slate-400 mb-2">Seleccionar producto a editar</label>
+                <select 
+                  onChange={(e) => {
+                    const prod = productos.find(p => p.id === parseInt(e.target.value));
+                    if (prod) seleccionarProductoEditar(prod);
+                  }}
+                  className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500"
+                >
+                  <option value="">-- Seleccionar producto --</option>
+                  {productos.map(p => (
+                    <option key={p.id} value={p.id}>
+                      {p.nombre} - Stock: {p.stock} und
+                    </option>
+                  ))}
+                </select>
+              </div>
+
+              {productoAEditar && (
+                <>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Nombre</label>
+                    <input 
+                      type="text" 
+                      value={nombre} 
+                      onChange={(e) => setNombre(e.target.value)} 
+                      className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Categoría</label>
+                    <select 
+                      value={categoria} 
+                      onChange={(e) => setCategoria(e.target.value as Categoria)} 
+                      className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm"
+                    >
+                      {CATEGORIAS.map(cat => (
+                        <option key={cat} value={cat}>{cat}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-2">Stock</label>
+                      <input 
+                        type="number" 
+                        value={stock} 
+                        onChange={(e) => setStock(e.target.value)} 
+                        className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm" 
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-400 mb-2">Stock Mínimo</label>
+                      <input 
+                        type="number" 
+                        value={stockMinimo} 
+                        onChange={(e) => setStockMinimo(e.target.value)} 
+                        className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm" 
+                      />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Cantidad Base</label>
+                    <input 
+                      type="number" 
+                      value={cantidadBase} 
+                      onChange={(e) => setCantidadBase(e.target.value)} 
+                      className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">📦 Unidades por Caja</label>
+                    <input 
+                      type="number" 
+                      value={unidadesPorCaja} 
+                      onChange={(e) => setUnidadesPorCaja(e.target.value)} 
+                      className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm" 
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Ubicación</label>
+                    <input 
+                      type="text" 
+                      value={ubicacion} 
+                      onChange={(e) => setUbicacion(e.target.value)} 
+                      className="w-full px-4 py-2.5 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm" 
+                    />
+                  </div>
+                  <button 
+                    onClick={handleEditar} 
+                    disabled={cargando} 
+                    className="w-full py-3 rounded-xl bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-600 text-white font-semibold transition-all flex items-center justify-center gap-2"
+                  >
+                    {cargando ? "GUARDANDO..." : "💾 GUARDAR CAMBIOS"}
+                  </button>
+                </>
+              )}
             </div>
           ) : (
             <div className="space-y-4">
@@ -886,7 +1393,7 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
                   <option value="">-- Seleccionar producto --</option>
                   {productos.map(p => (
                     <option key={p.id} value={p.id}>
-                      {p.nombre} - Stock: {p.stock} und - Base: {p.cantidad_base} und
+                      {p.nombre} - Stock: {p.stock} und - Base: {p.cantidad_base} und - Caja: {p.unidades_por_caja || 1} unid
                     </option>
                   ))}
                 </select>
@@ -922,40 +1429,57 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
   );
 }
 
-// ==================== MODAL EDITAR CANTIDAD BASE ====================
+// ==================== MODAL EDITAR CANTIDAD BASE (MEJORADO) ====================
 
 function ModalEditarCantidadBase({ producto, onClose, onActualizado, mostrarNotificacion }: { producto: Producto; onClose: () => void; onActualizado: () => void; mostrarNotificacion: (tipo: Notificacion['tipo'], mensaje: string) => void }) {
   const [cantidadBase, setCantidadBase] = useState(producto.cantidad_base?.toString() || "");
+  const [unidadesPorCaja, setUnidadesPorCaja] = useState(producto.unidades_por_caja?.toString() || "1");
   const [cargando, setCargando] = useState(false);
 
   const handleGuardar = async () => {
     const nuevaCantidad = parseInt(cantidadBase);
+    const nuevasUnidadesPorCaja = parseInt(unidadesPorCaja);
+    
     if (isNaN(nuevaCantidad) || nuevaCantidad < 0) {
-      mostrarNotificacion('error', "Ingrese una cantidad válida");
+      mostrarNotificacion('error', "Ingrese una cantidad base válida");
+      return;
+    }
+    
+    if (isNaN(nuevasUnidadesPorCaja) || nuevasUnidadesPorCaja < 1) {
+      mostrarNotificacion('error', "Ingrese unidades por caja válidas (mínimo 1)");
       return;
     }
 
     setCargando(true);
     const { error } = await supabase
       .from("productos")
-      .update({ cantidad_base: nuevaCantidad })
+      .update({ 
+        cantidad_base: nuevaCantidad,
+        unidades_por_caja: nuevasUnidadesPorCaja 
+      })
       .eq("id", producto.id);
 
     if (error) {
       console.error("Error:", error);
-      mostrarNotificacion('error', "Error al actualizar la cantidad base");
+      mostrarNotificacion('error', "Error al actualizar");
     } else {
-      mostrarNotificacion('success', `✅ Cantidad base de "${producto.nombre}" actualizada a ${nuevaCantidad}`);
+      mostrarNotificacion('success', `✅ "${producto.nombre}" actualizado: Base ${nuevaCantidad}, Caja ${nuevasUnidadesPorCaja} unid`);
       onActualizado();
       onClose();
     }
     setCargando(false);
   };
 
+  const pedidoUnidades = calcularPedidoSugerido(producto.stock, parseInt(cantidadBase) || 0);
+  const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, parseInt(unidadesPorCaja) || 1);
+  const textoPedido = cajas > 0 && resto > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''} + ${resto} und` 
+    : cajas > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''}` 
+    : `${resto} unidades`;
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6" onClick={onClose}>
-      <div className="relative w-full max-w-md rounded-2xl bg-[#0f1117] border border-[#2a2a3e] p-6 shadow-2xl" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-xl font-bold text-white mb-4">Editar Cantidad Base</h2>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="relative w-full max-w-md rounded-2xl bg-[#0f1117] border border-[#2a2a3e] p-6 shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
+        <h2 className="text-xl font-bold text-white mb-4">Editar Producto</h2>
         <p className="text-slate-400 mb-4">Producto: <span className="text-white font-semibold">{producto.nombre}</span></p>
         
         <div className="mb-4">
@@ -964,20 +1488,108 @@ function ModalEditarCantidadBase({ producto, onClose, onActualizado, mostrarNoti
             type="number" 
             value={cantidadBase} 
             onChange={(e) => setCantidadBase(e.target.value)} 
-            className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-lg text-center focus:outline-none focus:border-amber-500"
+            className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-lg text-center focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20"
             autoFocus
           />
           <p className="text-xs text-slate-500 mt-2">Cantidad que siempre debe haber en el bar</p>
-          <p className="text-xs text-amber-500 mt-1">Stock actual: {producto.stock} unidades</p>
-          <p className="text-xs text-orange-400 mt-1">Pedido sugerido: {calcularPedidoSugerido(producto.stock, parseInt(cantidadBase) || 0)} unidades</p>
+        </div>
+
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-slate-400 mb-2">📦 Unidades por Caja</label>
+          <input 
+            type="number" 
+            value={unidadesPorCaja} 
+            onChange={(e) => setUnidadesPorCaja(e.target.value)} 
+            className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-lg text-center focus:outline-none focus:border-amber-500"
+          />
+          <p className="text-xs text-slate-500 mt-2">¿Cuántas unidades vienen en una caja?</p>
+        </div>
+
+        <div className="bg-[#0a0d16] rounded-xl p-3 mb-4">
+          <p className="text-xs text-slate-400">Stock actual: <span className="text-white font-bold">{producto.stock}</span> unidades</p>
+          <p className="text-xs text-orange-400 mt-1">Pedido sugerido: {textoPedido} ({pedidoUnidades} und)</p>
         </div>
 
         <div className="flex gap-3">
-          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium">Cancelar</button>
-          <button onClick={handleGuardar} disabled={cargando} className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-semibold">
+          <button onClick={onClose} className="flex-1 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 text-white font-medium transition-all">Cancelar</button>
+          <button onClick={handleGuardar} disabled={cargando} className="flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white font-semibold transition-all shadow-lg">
             {cargando ? "Guardando..." : "Guardar"}
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+// ==================== MODAL RESTAURAR BACKUP ====================
+
+function ModalRestaurarBackup({ onClose, onRestaurar, mostrarNotificacion }: { onClose: () => void; onRestaurar: (productos: Producto[], movimientos: Movimiento[]) => void; mostrarNotificacion: (tipo: Notificacion['tipo'], mensaje: string) => void }) {
+  const [backups, setBackups] = useState<Array<{ fecha: string; productos: Producto[]; movimientos: Movimiento[] }>>([]);
+
+  useEffect(() => {
+    const cargarBackups = () => {
+      const backupsGuardados: Array<{ fecha: string; productos: Producto[]; movimientos: Movimiento[] }> = [];
+      for (let i = 0; i < localStorage.length; i++) {
+        const key = localStorage.key(i);
+        if (key?.startsWith('backup_')) {
+          try {
+            const data = JSON.parse(localStorage.getItem(key) || '');
+            if (data.productos && data.movimientos) {
+              backupsGuardados.push({
+                fecha: data.fecha || key.replace('backup_', ''),
+                productos: data.productos,
+                movimientos: data.movimientos
+              });
+            }
+          } catch (e) {}
+        }
+      }
+      backupsGuardados.sort((a, b) => new Date(b.fecha).getTime() - new Date(a.fecha).getTime());
+      setBackups(backupsGuardados);
+    };
+    cargarBackups();
+  }, []);
+
+  const handleRestaurar = (backup: { productos: Producto[]; movimientos: Movimiento[] }) => {
+    if (confirm("⚠️ Esta acción sobrescribirá los datos actuales. ¿Continuar?")) {
+      onRestaurar(backup.productos, backup.movimientos);
+      mostrarNotificacion('success', "Backup restaurado correctamente");
+      onClose();
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/80 backdrop-blur-md p-6 animate-in fade-in duration-200" onClick={onClose}>
+      <div className="relative w-full max-w-3xl max-h-[80vh] overflow-auto rounded-2xl bg-[#0f1117] border border-[#2a2a3e] p-6 shadow-2xl animate-in zoom-in-95 duration-300" onClick={(e) => e.stopPropagation()}>
+        <div className="flex justify-between items-center mb-6">
+          <h2 className="text-xl font-bold text-white">💾 Restaurar Backup</h2>
+          <button onClick={onClose} className="w-8 h-8 rounded-lg bg-slate-800 hover:bg-slate-700 text-slate-400">✕</button>
+        </div>
+
+        {backups.length === 0 ? (
+          <div className="text-center py-12 text-slate-500">
+            No hay backups disponibles. Los backups se crean automáticamente cada 5 minutos.
+          </div>
+        ) : (
+          <div className="space-y-3">
+            {backups.map((backup, idx) => (
+              <div key={idx} className="flex items-center justify-between p-4 rounded-xl bg-[#0a0d16] border border-[#2a2a3e]">
+                <div>
+                  <div className="text-white font-medium">{new Date(backup.fecha).toLocaleString()}</div>
+                  <div className="text-xs text-slate-500">
+                    {backup.productos.length} productos | {backup.movimientos.length} movimientos
+                  </div>
+                </div>
+                <button 
+                  onClick={() => handleRestaurar(backup)}
+                  className="px-4 py-2 rounded-lg bg-amber-500/20 text-amber-400 text-sm hover:bg-amber-500/30 transition-all"
+                >
+                  Restaurar
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -989,14 +1601,32 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
   const [busqueda, setBusqueda] = useState("");
   const [categoriaFiltro, setCategoriaFiltro] = useState<Categoria | null>(null);
   const [paginaActual, setPaginaActual] = useState(1);
+  const [ordenarPor, setOrdenarPor] = useState<"nombre" | "stock" | "categoria">("nombre");
+  const [ordenDireccion, setOrdenDireccion] = useState<"asc" | "desc">("asc");
   const itemsPorPagina = 20;
 
+  const productosOrdenados = useMemo(() => {
+    let sorted = [...productos];
+    switch (ordenarPor) {
+      case "nombre":
+        sorted.sort((a, b) => ordenDireccion === "asc" ? a.nombre.localeCompare(b.nombre) : b.nombre.localeCompare(a.nombre));
+        break;
+      case "stock":
+        sorted.sort((a, b) => ordenDireccion === "asc" ? a.stock - b.stock : b.stock - a.stock);
+        break;
+      case "categoria":
+        sorted.sort((a, b) => ordenDireccion === "asc" ? a.categoria.localeCompare(b.categoria) : b.categoria.localeCompare(a.categoria));
+        break;
+    }
+    return sorted;
+  }, [productos, ordenarPor, ordenDireccion]);
+
   const productosFiltrados = useMemo(() => {
-    return productos.filter(p => 
+    return productosOrdenados.filter(p => 
       p.nombre.toLowerCase().includes(busqueda.toLowerCase()) && 
       (!categoriaFiltro || p.categoria === categoriaFiltro)
     );
-  }, [productos, busqueda, categoriaFiltro]);
+  }, [productosOrdenados, busqueda, categoriaFiltro]);
 
   const totalPaginas = Math.ceil(productosFiltrados.length / itemsPorPagina);
   const productosPaginados = productosFiltrados.slice(
@@ -1006,28 +1636,56 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
 
   useEffect(() => {
     setPaginaActual(1);
-  }, [busqueda, categoriaFiltro]);
+  }, [busqueda, categoriaFiltro, ordenarPor, ordenDireccion]);
 
   const totalPedidos = productos.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
 
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-white mb-2">📦 Inventario General</h2>
+        <h2 className="text-2xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent mb-2">📦 Inventario General</h2>
         <p className="text-slate-500">Listado completo de todos los productos con cantidades actuales y pedidos sugeridos</p>
       </div>
 
       <div className="flex gap-3 mb-6 flex-wrap items-center">
         <div className="relative">
           <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
-          <input type="text" placeholder="Buscar producto..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className="pl-9 pr-4 py-2.5 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm w-72 focus:outline-none focus:border-amber-500 transition-all" />
+          <input 
+            type="text" 
+            placeholder="Buscar producto..." 
+            value={busqueda} 
+            onChange={(e) => setBusqueda(e.target.value)} 
+            className="pl-9 pr-4 py-2.5 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm w-72 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all" 
+          />
         </div>
+        
+        <select 
+          value={ordenarPor} 
+          onChange={(e) => setOrdenarPor(e.target.value as any)}
+          className="px-4 py-2.5 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm"
+        >
+          <option value="nombre">Ordenar por nombre</option>
+          <option value="stock">Ordenar por stock</option>
+          <option value="categoria">Ordenar por categoría</option>
+        </select>
+        
+        <button 
+          onClick={() => setOrdenDireccion(ordenDireccion === "asc" ? "desc" : "asc")}
+          className="px-4 py-2.5 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm"
+        >
+          {ordenDireccion === "asc" ? "↑ Ascendente" : "↓ Descendente"}
+        </button>
+        
         <button onClick={() => setCategoriaFiltro(null)} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${!categoriaFiltro ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-md' : 'bg-[#0f1117] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}>Todas</button>
-        {CATEGORIAS.map(cat => <button key={cat} onClick={() => setCategoriaFiltro(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${categoriaFiltro === cat ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-md' : 'bg-[#0f1117] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}><span>{CATEGORIA_EMOJI[cat]}</span>{cat}</button>)}
+        {CATEGORIAS.map(cat => (
+          <button key={cat} onClick={() => setCategoriaFiltro(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${categoriaFiltro === cat ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-md' : 'bg-[#0f1117] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}>
+            <span>{CATEGORIA_EMOJI[cat]}</span>{cat}
+          </button>
+        ))}
       </div>
 
       <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-2xl overflow-hidden shadow-xl">
-        <div className="px-5 py-4 border-b border-[#2a2a3e] bg-[#0a0d16] flex justify-between items-center">
+        <div className="px-5 py-4 border-b border-[#2a2a3e] bg-[#0a0d16] flex justify-between items-center flex-wrap gap-2">
           <span className="text-base font-semibold text-white">📋 Lista de Productos ({productosFiltrados.length} productos)</span>
           <div className="text-sm">
             <span className="text-slate-400">Total a pedir: </span>
@@ -1040,9 +1698,10 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
             <thead className="bg-[#0a0d16] border-b border-[#2a2a3e]">
               <tr className="text-left text-xs font-semibold text-slate-500 uppercase tracking-wider">
                 <th className="p-4">Producto</th>
-                <th className="p-4 text-center">Stock Actual</th>
-                <th className="p-4 text-center">Cantidad Base</th>
-                <th className="p-4 text-center">Pedido Sugerido</th>
+                <th className="p-4 text-center">Stock</th>
+                <th className="p-4 text-center">Base</th>
+                <th className="p-4 text-center">Unid./Caja</th>
+                <th className="p-4 text-center">Pedido</th>
                 <th className="p-4">Estado</th>
                 <th className="p-4">Ubicación</th>
                 <th className="p-4">Acciones</th>
@@ -1052,6 +1711,8 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
               {productosPaginados.map((p, i) => {
                 const est = estadoInfo(p);
                 const pedidoSugerido = calcularPedidoSugerido(p.stock, p.cantidad_base);
+                const { cajas, resto } = calcularCajasNecesarias(pedidoSugerido, p.unidades_por_caja || 1);
+                const textoPedido = cajas > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''}${resto > 0 ? ` + ${resto}` : ''}` : `${resto} und`;
                 return (
                   <tr key={p.id} className={`border-b border-[#1a1a2a] hover:bg-[#1a1a2a] transition-all ${i % 2 === 0 ? 'bg-transparent' : 'bg-[#0a0d16]/50'}`}>
                     <td className="p-4">
@@ -1063,15 +1724,13 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
                       </div>
                     </td>
                     <td className="p-4 text-center"><span className="text-3xl font-bold" style={{ color: est.color }}>{p.stock}</span><span className="text-sm text-slate-500 ml-1">und</span></td>
-                    <td className="p-4 text-center">
-                      <span className="text-xl font-semibold text-blue-400">{p.cantidad_base}</span>
-                      <span className="text-sm text-slate-500 ml-1">und</span>
-                    </td>
+                    <td className="p-4 text-center"><span className="text-xl font-semibold text-blue-400">{p.cantidad_base}</span><span className="text-sm text-slate-500 ml-1">und</span></td>
+                    <td className="p-4 text-center"><span className="text-lg font-semibold text-purple-400">{p.unidades_por_caja || 1}</span><span className="text-sm text-slate-500 ml-1">und/caja</span></td>
                     <td className="p-4 text-center">
                       {pedidoSugerido > 0 ? (
                         <div className="flex flex-col items-center">
-                          <span className="text-2xl font-bold text-orange-400">{pedidoSugerido}</span>
-                          <span className="text-xs text-orange-500">unidades</span>
+                          <span className="text-2xl font-bold text-orange-400">{textoPedido}</span>
+                          <span className="text-xs text-orange-500">({pedidoSugerido} und)</span>
                         </div>
                       ) : (
                         <span className="text-sm text-green-500">✓ Suficiente</span>
@@ -1084,7 +1743,7 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
                         onClick={() => onEditarCantidadBase(p)}
                         className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20 transition-all"
                       >
-                        Editar Base
+                        Editar
                       </button>
                     </td>
                   </tr>
@@ -1092,7 +1751,7 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
               })}
               {productosFiltrados.length === 0 && (
                 <tr>
-                  <td colSpan={7} className="text-center py-12 text-slate-500">No se encontraron productos</td>
+                  <td colSpan={8} className="text-center py-12 text-slate-500">No se encontraron productos</td>
                 </tr>
               )}
             </tbody>
@@ -1123,23 +1782,23 @@ function VistaInventario({ productos, onEditarCantidadBase }: { productos: Produ
       </div>
 
       <div className="mt-6 grid grid-cols-5 gap-4">
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-xl p-4 text-center border border-blue-500/30">
           <div className="text-2xl font-bold text-blue-400">{productos.length}</div>
           <div className="text-xs text-slate-500">Total Productos</div>
         </div>
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-green-500/10 to-green-600/5 rounded-xl p-4 text-center border border-green-500/30">
           <div className="text-2xl font-bold text-green-400">{productos.reduce((sum, p) => sum + p.stock, 0)}</div>
           <div className="text-xs text-slate-500">Unidades Totales</div>
         </div>
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-orange-500/10 to-orange-600/5 rounded-xl p-4 text-center border border-orange-500/30">
           <div className="text-2xl font-bold text-orange-400">{totalPedidos}</div>
           <div className="text-xs text-slate-500">Unidades a Pedir</div>
         </div>
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-yellow-500/10 to-yellow-600/5 rounded-xl p-4 text-center border border-yellow-500/30">
           <div className="text-2xl font-bold text-yellow-400">{productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).length}</div>
           <div className="text-xs text-slate-500">Stock Crítico</div>
         </div>
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-red-500/10 to-red-600/5 rounded-xl p-4 text-center border border-red-500/30">
           <div className="text-2xl font-bold text-red-400">{productos.filter(p => p.stock === 0).length}</div>
           <div className="text-xs text-slate-500">Productos Agotados</div>
         </div>
@@ -1182,14 +1841,14 @@ function VistaMovimientos({ movimientos, productos }: { movimientos: Movimiento[
   return (
     <div className="p-6">
       <div className="mb-6">
-        <h2 className="text-2xl font-bold text-white mb-2">🔄 Historial de Movimientos</h2>
+        <h2 className="text-2xl font-bold bg-gradient-to-r from-white to-slate-400 bg-clip-text text-transparent mb-2">🔄 Historial de Movimientos</h2>
         <p className="text-slate-500">Registro completo de todas las entradas y salidas de inventario</p>
       </div>
 
       <div className="grid grid-cols-4 gap-4 mb-6">
         <div>
           <label className="block text-xs font-medium text-slate-400 mb-1">Tipo de Movimiento</label>
-          <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value as TipoReporte)} className="w-full px-4 py-2 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500">
+          <select value={filtroTipo} onChange={(e) => setFiltroTipo(e.target.value as TipoReporte)} className="w-full px-4 py-2 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20">
             <option value="todos">Todos</option>
             <option value="entradas">↑ Entradas</option>
             <option value="salidas">↓ Salidas</option>
@@ -1227,7 +1886,7 @@ function VistaMovimientos({ movimientos, productos }: { movimientos: Movimiento[
                 <th className="p-4 text-center">Cantidad</th>
                 <th className="p-4">Motivo</th>
                 <th className="p-4">Notas</th>
-              </tr>
+               </tr>
             </thead>
             <tbody>
               {movimientosPaginados.map((m, i) => {
@@ -1278,15 +1937,15 @@ function VistaMovimientos({ movimientos, productos }: { movimientos: Movimiento[
       </div>
 
       <div className="mt-6 grid grid-cols-3 gap-4">
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-xl p-4 text-center border border-blue-500/30">
           <div className="text-2xl font-bold text-blue-400">{movimientosFiltrados.length}</div>
           <div className="text-xs text-slate-500">Total Movimientos</div>
         </div>
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-green-500/10 to-green-600/5 rounded-xl p-4 text-center border border-green-500/30">
           <div className="text-2xl font-bold text-green-400">{movimientosFiltrados.filter(m => m.tipo === "entrada").reduce((s, m) => s + m.cantidad, 0)}</div>
           <div className="text-xs text-slate-500">Unidades Entradas</div>
         </div>
-        <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4 text-center">
+        <div className="bg-gradient-to-br from-red-500/10 to-red-600/5 rounded-xl p-4 text-center border border-red-500/30">
           <div className="text-2xl font-bold text-red-400">{movimientosFiltrados.filter(m => m.tipo === "salida").reduce((s, m) => s + m.cantidad, 0)}</div>
           <div className="text-xs text-slate-500">Unidades Salidas</div>
         </div>
@@ -1310,22 +1969,28 @@ export default function Home() {
   const [modalReportes, setModalReportes] = useState(false);
   const [modalAdminProductos, setModalAdminProductos] = useState(false);
   const [modalEditarBase, setModalEditarBase] = useState<Producto | null>(null);
+  const [modalRestaurarBackup, setModalRestaurarBackup] = useState(false);
   const [filtroMovimientos, setFiltroMovimientos] = useState<TipoReporte>("todos");
   const [vistaActual, setVistaActual] = useState<Vista>("dashboard");
   const [notificacion, setNotificacion] = useState<Notificacion | null>(null);
+  const [busquedaAvanzada, setBusquedaAvanzada] = useState("");
+  const [filtroUbicacion, setFiltroUbicacion] = useState("");
 
   const [productoEntrada, setProductoEntrada] = useState("");
   const [cantidadEntrada, setCantidadEntrada] = useState("");
   const [fechaEntrada, setFechaEntrada] = useState(new Date().toISOString().split('T')[0]);
   const [notasEntrada, setNotasEntrada] = useState("");
+  const [motivoEntrada, setMotivoEntrada] = useState("Compra");
   const [loadingEntrada, setLoadingEntrada] = useState(false);
+  
   const [productoSalida, setProductoSalida] = useState("");
   const [cantidadSalida, setCantidadSalida] = useState("");
   const [notasSalida, setNotasSalida] = useState("");
+  const [motivoSalida, setMotivoSalida] = useState("Venta");
   const [loadingSalida, setLoadingSalida] = useState(false);
 
   const mostrarNotificacion = useCallback((tipo: Notificacion['tipo'], mensaje: string) => {
-    setNotificacion({ tipo, mensaje });
+    setNotificacion({ tipo, mensaje, id: Date.now() });
   }, []);
 
   const cargarProductos = useCallback(async () => { 
@@ -1338,6 +2003,7 @@ export default function Home() {
     if (data) setMovimientos(data); 
   }, []);
 
+  // Backup automático
   useEffect(() => {
     const backupInterval = setInterval(() => {
       if (productos.length > 0) {
@@ -1346,13 +2012,59 @@ export default function Home() {
           movimientos,
           fecha: new Date().toISOString()
         };
-        localStorage.setItem('backup_automatico', JSON.stringify(backup));
+        localStorage.setItem(`backup_${new Date().toISOString().slice(0, 19)}`, JSON.stringify(backup));
+        
+        const backups = Object.keys(localStorage).filter(k => k.startsWith('backup_'));
+        if (backups.length > 10) {
+          backups.sort().slice(0, -10).forEach(k => localStorage.removeItem(k));
+        }
+        
         console.log('Backup automático guardado');
       }
     }, 5 * 60 * 1000);
     
     return () => clearInterval(backupInterval);
   }, [productos, movimientos]);
+
+  // Restaurar backup
+  const handleRestaurarBackup = useCallback(async (productosBackup: Producto[], movimientosBackup: Movimiento[]) => {
+    setCargando(true);
+    try {
+      await supabase.from("productos").delete().neq("id", 0);
+      await supabase.from("movimientos").delete().neq("id", 0);
+      
+      for (const p of productosBackup) {
+        await supabase.from("productos").insert({
+          nombre: p.nombre,
+          categoria: p.categoria,
+          stock: p.stock,
+          stock_minimo: p.stock_minimo,
+          cantidad_base: p.cantidad_base,
+          unidades_por_caja: p.unidades_por_caja || 1,
+          ubicacion: p.ubicacion
+        });
+      }
+      
+      for (const m of movimientosBackup) {
+        await supabase.from("movimientos").insert({
+          producto_id: m.producto_id,
+          tipo: m.tipo,
+          cantidad: m.cantidad,
+          motivo: m.motivo,
+          notas: m.notas,
+          created_at: m.created_at
+        });
+      }
+      
+      await cargarProductos();
+      await cargarMovimientos();
+      mostrarNotificacion('success', "Backup restaurado correctamente");
+    } catch (error) {
+      mostrarNotificacion('error', "Error al restaurar backup");
+    } finally {
+      setCargando(false);
+    }
+  }, [cargarProductos, cargarMovimientos, mostrarNotificacion]);
 
   useEffect(() => {
     const filtroGuardado = localStorage.getItem('ultimo_filtro_categoria');
@@ -1387,20 +2099,37 @@ export default function Home() {
     } 
   }, [usuario, cargarProductos, cargarMovimientos]);
 
+  // Atajos de teclado
   useEffect(() => {
     const handleKeyPress = (e: KeyboardEvent) => {
       if (e.ctrlKey && e.key === 'i') {
         e.preventDefault();
         setVistaActual('inventario');
-        mostrarNotificacion('info', 'Cambiado a vista de Inventario');
+        mostrarNotificacion('info', 'Cambiado a vista de Inventario (Ctrl+I)');
       } else if (e.ctrlKey && e.key === 'm') {
         e.preventDefault();
         setVistaActual('movimientos');
-        mostrarNotificacion('info', 'Cambiado a vista de Movimientos');
+        mostrarNotificacion('info', 'Cambiado a vista de Movimientos (Ctrl+M)');
       } else if (e.ctrlKey && e.key === 'd') {
         e.preventDefault();
         setVistaActual('dashboard');
-        mostrarNotificacion('info', 'Cambiado a Dashboard');
+        mostrarNotificacion('info', 'Cambiado a Dashboard (Ctrl+D)');
+      } else if (e.ctrlKey && e.key === 'n') {
+        e.preventDefault();
+        setPestanaActiva('ingreso');
+        mostrarNotificacion('info', 'Modo: Registrar Ingreso (Ctrl+N)');
+      } else if (e.ctrlKey && e.key === 's') {
+        e.preventDefault();
+        setPestanaActiva('salida');
+        mostrarNotificacion('info', 'Modo: Registrar Salida (Ctrl+S)');
+      } else if (e.ctrlKey && e.key === 'e') {
+        e.preventDefault();
+        setModalEstadisticas(true);
+        mostrarNotificacion('info', 'Abriendo estadísticas...');
+      } else if (e.ctrlKey && e.key === 'r') {
+        e.preventDefault();
+        setModalReportes(true);
+        mostrarNotificacion('info', 'Abriendo reportes...');
       }
     };
     
@@ -1408,12 +2137,14 @@ export default function Home() {
     return () => window.removeEventListener('keydown', handleKeyPress);
   }, [mostrarNotificacion]);
 
-  const productosFiltrados = useMemo(() => {
-    return productos.filter(p => 
-      p.nombre.toLowerCase().includes(busqueda.toLowerCase()) && 
-      (!categoriaFiltro || p.categoria === categoriaFiltro)
-    );
-  }, [productos, busqueda, categoriaFiltro]);
+  const productosFiltradosAvanzado = useMemo(() => {
+    return productos.filter(p => {
+      const matchNombre = p.nombre.toLowerCase().includes(busquedaAvanzada.toLowerCase());
+      const matchCategoria = !categoriaFiltro || p.categoria === categoriaFiltro;
+      const matchUbicacion = !filtroUbicacion || p.ubicacion?.toLowerCase().includes(filtroUbicacion.toLowerCase());
+      return matchNombre && matchCategoria && matchUbicacion;
+    });
+  }, [productos, busquedaAvanzada, categoriaFiltro, filtroUbicacion]);
 
   const totalProductos = productos.length;
   const stockCritico = productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).length;
@@ -1448,14 +2179,16 @@ export default function Home() {
         producto_id: prod.id, 
         tipo: "entrada", 
         cantidad, 
-        motivo: "Compra", 
+        motivo: motivoEntrada, 
         fecha: fechaEntrada, 
-        notas: notasEntrada 
+        notas: notasEntrada,
+        usuario: usuario?.nombre
       });
       
       setProductoEntrada(""); 
       setCantidadEntrada(""); 
-      setNotasEntrada(""); 
+      setNotasEntrada("");
+      setMotivoEntrada("Compra");
       setFechaEntrada(new Date().toISOString().split('T')[0]);
       await cargarProductos(); 
       await cargarMovimientos();
@@ -1496,13 +2229,15 @@ export default function Home() {
         producto_id: prod.id, 
         tipo: "salida", 
         cantidad, 
-        motivo: "Venta", 
-        notas: notasSalida 
+        motivo: motivoSalida, 
+        notas: notasSalida,
+        usuario: usuario?.nombre
       });
       
       setProductoSalida(""); 
       setCantidadSalida(""); 
       setNotasSalida("");
+      setMotivoSalida("Venta");
       await cargarProductos(); 
       await cargarMovimientos();
       mostrarNotificacion('success', `✅ Salida de ${cantidad} unidades registrada correctamente`);
@@ -1513,229 +2248,346 @@ export default function Home() {
     }
   };
 
+  // ==================== FUNCIÓN DE EXPORTACIÓN A EXCEL MEJORADA ====================
   const descargarExcel = async () => {
-    try {
-      const wb = new ExcelJS.Workbook();
-      const sh = wb.addWorksheet("Inventario");
-      
-      const tituloRow = sh.addRow(["INFORME DE INVENTARIO"]);
-      tituloRow.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
-      tituloRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfbbf24" } };
-      tituloRow.height = 30;
-      sh.mergeCells(`A${tituloRow.number}:D${tituloRow.number}`);
-      
-      const fechaRow = sh.addRow([`Fecha de generación: ${new Date().toLocaleString("es-CO")}`]);
-      fechaRow.font = { italic: true, size: 11, color: { argb: "FF666666" } };
-      sh.mergeCells(`A${fechaRow.number}:D${fechaRow.number}`);
-      
-      const usuarioRow = sh.addRow([`Generado por: ${usuario?.nombre || "Bartender"}`]);
-      usuarioRow.font = { italic: true, size: 11, color: { argb: "FF666666" } };
-      sh.mergeCells(`A${usuarioRow.number}:D${usuarioRow.number}`);
-      
-      sh.addRow([]);
-      
-      const headers = ["Producto", "Cantidad Base", "Stock Actual", "Pedido Sugerido"];
-      const headerRow = sh.addRow(headers);
-      headerRow.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-      headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1f2937" } };
-      headerRow.height = 25;
-      
-      productos.forEach((p) => {
-        const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
-        const row = sh.addRow([p.nombre, p.cantidad_base, p.stock, pedido]);
-        
-        if (pedido > 0) {
-          row.getCell(4).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-          row.getCell(4).font = { color: { argb: "FFef4444" }, bold: true };
-        }
-        
-        if (p.stock <= p.stock_minimo) {
-          row.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-          row.getCell(3).font = { color: { argb: "FFef4444" }, bold: true };
-        }
-      });
-      
-      const totalStock = productos.reduce((sum, p) => sum + p.stock, 0);
-      const totalPedidosExcel = productos.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
-      
-      const totalRow = sh.addRow(["TOTALES", "", totalStock, totalPedidosExcel]);
-      totalRow.font = { bold: true };
-      totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFe5e7eb" } };
-      
-      sh.addRow([]);
-      
-      const resumenTitle = sh.addRow(["📊 RESULTADOS CLAVE"]);
-      resumenTitle.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
-      resumenTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF3b82f6" } };
-      sh.mergeCells(`A${resumenTitle.number}:D${resumenTitle.number}`);
-      
-      sh.addRow(["Total de productos en inventario", "", "", productos.length]);
-      sh.addRow(["Unidades totales en stock", "", "", totalStock]);
-      sh.addRow(["Unidades que deben pedirse", "", "", totalPedidosExcel]);
-      sh.addRow(["Productos con stock crítico", "", "", productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).length]);
-      sh.addRow(["Productos agotados (stock 0)", "", "", productos.filter(p => p.stock === 0).length]);
-      
-      sh.addRow([]);
-      
-      const criticosTitle = sh.addRow(["⚠️ PRODUCTOS CON STOCK CRÍTICO (Requieren atención inmediata)"]);
-      criticosTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-      criticosTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFef4444" } };
-      sh.mergeCells(`A${criticosTitle.number}:D${criticosTitle.number}`);
-      
-      const productosCriticos = productos.filter(p => p.stock <= p.stock_minimo);
-      if (productosCriticos.length > 0) {
-        const critHeader = sh.addRow(["Producto", "Stock Actual", "Stock Mínimo", "Déficit"]);
-        critHeader.font = { bold: true };
-        critHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-        
-        productosCriticos.forEach(p => {
-          const deficit = p.stock_minimo - p.stock;
-          sh.addRow([p.nombre, p.stock, p.stock_minimo, deficit > 0 ? deficit : 0]);
-        });
-      } else {
-        sh.addRow(["✅ No hay productos con stock crítico"]);
-        sh.mergeCells(`A${sh.lastRow.number}:D${sh.lastRow.number}`);
+  try {
+    const wb = new ExcelJS.Workbook();
+    const sh = wb.addWorksheet("Inventario");
+    
+    // Número fijo de columnas que usamos
+    const NUM_COLUMNAS = 5;
+    const letras = ['A', 'B', 'C', 'D', 'E'];
+    
+    // Función para aplicar bordes solo a celdas específicas
+    const aplicarBordesACelda = (row: any, col: number) => {
+      const cell = row.getCell(col);
+      cell.border = {
+        top: { style: "thin" },
+        left: { style: "thin" },
+        bottom: { style: "thin" },
+        right: { style: "thin" }
+      };
+    };
+    
+    // ========== TÍTULO PRINCIPAL ==========
+    const tituloRow = sh.addRow(["INFORME DE INVENTARIO"]);
+    tituloRow.getCell(1).font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
+    tituloRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfbbf24" } };
+    tituloRow.height = 30;
+    sh.mergeCells(`A${tituloRow.number}:E${tituloRow.number}`);
+    // Aplicar bordes solo a la celda combinada (que es la A)
+    aplicarBordesACelda(tituloRow, 1);
+    
+    // ========== FECHA ==========
+    const fechaRow = sh.addRow([`Fecha de generación: ${new Date().toLocaleString("es-CO")}`]);
+    fechaRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
+    sh.mergeCells(`A${fechaRow.number}:E${fechaRow.number}`);
+    aplicarBordesACelda(fechaRow, 1);
+    
+    // ========== USUARIO ==========
+    const usuarioRow = sh.addRow([`Generado por: ${usuario?.nombre || "Bartender"}`]);
+    usuarioRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
+    sh.mergeCells(`A${usuarioRow.number}:E${usuarioRow.number}`);
+    aplicarBordesACelda(usuarioRow, 1);
+    
+    sh.addRow([]);
+    const filaVacia = sh.lastRow;
+    if (filaVacia) {
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(filaVacia, i);
       }
-      
-      sh.addRow([]);
-      
-      const pedidoTitle = sh.addRow(["🛒 PRODUCTOS QUE NECESITAN PEDIDO"]);
-      pedidoTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-      pedidoTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFf97316" } };
-      sh.mergeCells(`A${pedidoTitle.number}:D${pedidoTitle.number}`);
-      
-      const productosConPedido = productos.filter(p => calcularPedidoSugerido(p.stock, p.cantidad_base) > 0);
-      if (productosConPedido.length > 0) {
-        const pedHeader = sh.addRow(["Producto", "Stock Actual", "Cantidad Base", "Cantidad a Pedir"]);
-        pedHeader.font = { bold: true };
-        pedHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
-        
-        productosConPedido.forEach(p => {
-          const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
-          sh.addRow([p.nombre, p.stock, p.cantidad_base, pedido]);
-        });
-        
-        sh.addRow([]);
-        const totalPedidoRow = sh.addRow(["TOTAL A PEDIR", "", "", totalPedidosExcel]);
-        totalPedidoRow.font = { bold: true };
-        totalPedidoRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
-      } else {
-        sh.addRow(["✅ Todos los productos tienen stock suficiente"]);
-        sh.mergeCells(`A${sh.lastRow.number}:D${sh.lastRow.number}`);
-      }
-      
-      sh.addRow([]);
-      
-      const categoriaTitle = sh.addRow(["📈 ANÁLISIS POR CATEGORÍA"]);
-      categoriaTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-      categoriaTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF8b5cf6" } };
-      sh.mergeCells(`A${categoriaTitle.number}:D${categoriaTitle.number}`);
-      
-      const catHeader = sh.addRow(["Categoría", "Productos", "Stock Total", "Stock Mínimo Promedio"]);
-      catHeader.font = { bold: true };
-      
-      CATEGORIAS.forEach(cat => {
-        const productosCat = productos.filter(p => p.categoria === cat);
-        const stockTotal = productosCat.reduce((sum, p) => sum + p.stock, 0);
-        const stockMinimoProm = productosCat.reduce((sum, p) => sum + p.stock_minimo, 0) / (productosCat.length || 1);
-        
-        sh.addRow([
-          `${CATEGORIA_EMOJI[cat]} ${cat}`,
-          productosCat.length,
-          stockTotal,
-          Math.round(stockMinimoProm)
-        ]);
-      });
-      
-      sh.addRow([]);
-      
-      const movTitle = sh.addRow(["🔄 ACTIVIDAD RECIENTE (Últimos 7 días)"]);
-      movTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-      movTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF06b6d4" } };
-      sh.mergeCells(`A${movTitle.number}:D${movTitle.number}`);
-      
-      const movHeader = sh.addRow(["Fecha", "Entradas (unidades)", "Salidas (unidades)", "Movimiento Neto"]);
-      movHeader.font = { bold: true };
-      
-      for (let i = 6; i >= 0; i--) {
-        const fecha = new Date();
-        fecha.setDate(fecha.getDate() - i);
-        fecha.setHours(0, 0, 0, 0);
-        const fechaStr = fecha.toISOString().split('T')[0];
-        const fechaDisplay = fecha.toLocaleDateString("es-CO");
-        
-        const movimientosDia = movimientos.filter(m => m.created_at?.split('T')[0] === fechaStr);
-        const entradas = movimientosDia.filter(m => m.tipo === "entrada").reduce((sum, m) => sum + m.cantidad, 0);
-        const salidas = movimientosDia.filter(m => m.tipo === "salida").reduce((sum, m) => sum + m.cantidad, 0);
-        const neto = entradas - salidas;
-        
-        const row = sh.addRow([fechaDisplay, entradas, salidas, neto]);
-        if (neto < 0) {
-          row.getCell(4).font = { color: { argb: "FFef4444" }, bold: true };
-        } else if (neto > 0) {
-          row.getCell(4).font = { color: { argb: "FF22c55e" }, bold: true };
-        }
-      }
-      
-      sh.addRow([]);
-      
-      const topTitle = sh.addRow(["🏆 TOP 5 PRODUCTOS MÁS VENDIDOS"]);
-      topTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-      topTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFeab308" } };
-      sh.mergeCells(`A${topTitle.number}:D${topTitle.number}`);
-      
-      const topHeader = sh.addRow(["Producto", "Unidades Vendidas", "Stock Actual", "Categoría"]);
-      topHeader.font = { bold: true };
-      
-      const topProductos = productos.map(p => ({
-        nombre: p.nombre,
-        salidas: movimientos.filter(m => m.producto_id === p.id && m.tipo === "salida").reduce((sum, m) => sum + m.cantidad, 0),
-        stock: p.stock,
-        categoria: p.categoria
-      })).sort((a, b) => b.salidas - a.salidas).slice(0, 5);
-      
-      topProductos.forEach(p => {
-        sh.addRow([p.nombre, p.salidas, p.stock, p.categoria]);
-      });
-      
-      sh.addRow([]);
-      
-      const footerRow = sh.addRow([`Reporte generado por Sistema de Inventario - ${new Date().getFullYear()}`]);
-      footerRow.font = { italic: true, size: 10, color: { argb: "FF888888" } };
-      sh.mergeCells(`A${footerRow.number}:D${footerRow.number}`);
-      
-      sh.columns = [
-        { width: 35 },
-        { width: 20 },
-        { width: 20 },
-        { width: 25 }
-      ];
-      
-      sh.eachRow(row => {
-        row.eachCell(cell => {
-          cell.border = {
-            top: { style: "thin" },
-            left: { style: "thin" },
-            bottom: { style: "thin" },
-            right: { style: "thin" }
-          };
-        });
-      });
-      
-      const buf = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `inventario_${new Date().toLocaleDateString("es-CO").replace(/\//g, "-")}.xlsx`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      mostrarNotificacion('success', "✅ Reporte Excel generado exitosamente");
-    } catch (error) {
-      console.error("Error al exportar:", error);
-      mostrarNotificacion('error', "❌ Error al generar el reporte Excel");
     }
-  };
+    
+    // ========== ENCABEZADOS ==========
+    const headers = ["Producto", "Unid./Caja", "Stock Actual", "Pedido (Unid.)", "Cajas a Pedir"];
+    const headerRow = sh.addRow(headers);
+    for (let i = 1; i <= headers.length; i++) {
+      const cell = headerRow.getCell(i);
+      cell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1f2937" } };
+      aplicarBordesACelda(headerRow, i);
+    }
+    headerRow.height = 25;
+    
+    // ========== DATOS DE PRODUCTOS ==========
+    productos.forEach((p) => {
+      const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
+      const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, p.unidades_por_caja || 1);
+      
+      let textoCajas = "";
+      if (cajas > 0 && resto > 0) {
+        textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''} + ${resto} und`;
+      } else if (cajas > 0) {
+        textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''}`;
+      } else if (resto > 0) {
+        textoCajas = `${resto} unidades sueltas`;
+      } else {
+        textoCajas = "0";
+      }
+      
+      const row = sh.addRow([
+        p.nombre, 
+        p.unidades_por_caja || 1, 
+        p.stock, 
+        pedidoUnidades, 
+        textoCajas
+      ]);
+      
+      // Aplicar bordes a todas las celdas de la fila
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(row, i);
+      }
+      
+      // Resaltar productos con pedido sugerido
+      if (pedidoUnidades > 0) {
+        const cellPedido = row.getCell(4);
+        cellPedido.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+        cellPedido.font = { color: { argb: "FFef4444" }, bold: true };
+        
+        const cellCajas = row.getCell(5);
+        cellCajas.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
+        cellCajas.font = { color: { argb: "FFf97316" }, bold: true };
+      }
+      
+      // Resaltar stock crítico
+      if (p.stock <= p.stock_minimo) {
+        const cellStock = row.getCell(3);
+        cellStock.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+        cellStock.font = { color: { argb: "FFef4444" }, bold: true };
+      }
+    });
+    
+    // ========== FILA DE TOTALES ==========
+    const totalStock = productos.reduce((sum, p) => sum + p.stock, 0);
+    const totalPedidosUnidades = productos.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
+    const totalCajas = productos.reduce((sum, p) => {
+      const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
+      const { cajas } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
+      return sum + cajas;
+    }, 0);
+    
+    const totalRow = sh.addRow(["TOTALES", "", totalStock, totalPedidosUnidades, `${totalCajas} cajas`]);
+    for (let i = 1; i <= NUM_COLUMNAS; i++) {
+      const cell = totalRow.getCell(i);
+      cell.font = { bold: true };
+      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFe5e7eb" } };
+      aplicarBordesACelda(totalRow, i);
+    }
+    
+    sh.addRow([]);
+    const filaVacia2 = sh.lastRow;
+    if (filaVacia2) {
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(filaVacia2, i);
+      }
+    }
+    
+    // ========== RESULTADOS CLAVE ==========
+    const resumenTitle = sh.addRow(["📊 RESULTADOS CLAVE"]);
+    const titleCell = resumenTitle.getCell(1);
+    titleCell.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
+    titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF3b82f6" } };
+    sh.mergeCells(`A${resumenTitle.number}:E${resumenTitle.number}`);
+    aplicarBordesACelda(resumenTitle, 1);
+    
+    // Filas de resultados
+    const resultados = [
+      ["Total de productos en inventario", "", "", "", productos.length],
+      ["Unidades totales en stock", "", "", "", totalStock],
+      ["Unidades que deben pedirse", "", "", "", totalPedidosUnidades],
+      ["Cajas totales a pedir", "", "", "", totalCajas],
+      ["Productos con stock crítico", "", "", "", productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).length],
+      ["Productos agotados (stock 0)", "", "", "", productos.filter(p => p.stock === 0).length]
+    ];
+    
+    resultados.forEach(fila => {
+      const row = sh.addRow(fila);
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(row, i);
+        if (i === 5) {
+          row.getCell(i).font = { bold: true };
+        }
+      }
+    });
+    
+    sh.addRow([]);
+    const filaVacia3 = sh.lastRow;
+    if (filaVacia3) {
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(filaVacia3, i);
+      }
+    }
+    
+    // ========== PRODUCTOS CON STOCK CRÍTICO ==========
+    const criticosTitle = sh.addRow(["⚠️ PRODUCTOS CON STOCK CRÍTICO"]);
+    const critTitleCell = criticosTitle.getCell(1);
+    critTitleCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    critTitleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFef4444" } };
+    sh.mergeCells(`A${criticosTitle.number}:E${criticosTitle.number}`);
+    aplicarBordesACelda(criticosTitle, 1);
+    
+    const productosCriticos = productos.filter(p => p.stock <= p.stock_minimo);
+    if (productosCriticos.length > 0) {
+      const critHeader = sh.addRow(["Producto", "Unid./Caja", "Stock Actual", "Stock Mínimo", "Déficit"]);
+      for (let i = 1; i <= 5; i++) {
+        const cell = critHeader.getCell(i);
+        cell.font = { bold: true };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+        aplicarBordesACelda(critHeader, i);
+      }
+      
+      productosCriticos.forEach(p => {
+        const deficit = p.stock_minimo - p.stock;
+        const deficitCajas = Math.ceil(deficit / (p.unidades_por_caja || 1));
+        const row = sh.addRow([p.nombre, p.unidades_por_caja || 1, p.stock, p.stock_minimo, `${deficit > 0 ? deficit : 0} und (${deficitCajas} cajas aprox)`]);
+        for (let i = 1; i <= 5; i++) {
+          aplicarBordesACelda(row, i);
+        }
+      });
+    } else {
+      const noCriticosRow = sh.addRow(["✅ No hay productos con stock crítico"]);
+      sh.mergeCells(`A${noCriticosRow.number}:E${noCriticosRow.number}`);
+      aplicarBordesACelda(noCriticosRow, 1);
+    }
+    
+    sh.addRow([]);
+    const filaVacia4 = sh.lastRow;
+    if (filaVacia4) {
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(filaVacia4, i);
+      }
+    }
+    
+    // ========== PRODUCTOS QUE NECESITAN PEDIDO ==========
+    const pedidoTitle = sh.addRow(["🛒 PRODUCTOS QUE NECESITAN PEDIDO"]);
+    const pedTitleCell = pedidoTitle.getCell(1);
+    pedTitleCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    pedTitleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFf97316" } };
+    sh.mergeCells(`A${pedidoTitle.number}:E${pedidoTitle.number}`);
+    aplicarBordesACelda(pedidoTitle, 1);
+    
+    const productosConPedido = productos.filter(p => calcularPedidoSugerido(p.stock, p.cantidad_base) > 0);
+    if (productosConPedido.length > 0) {
+      const pedHeader = sh.addRow(["Producto", "Unid./Caja", "Stock Actual", "Cantidad Base", "Pedido"]);
+      for (let i = 1; i <= 5; i++) {
+        const cell = pedHeader.getCell(i);
+        cell.font = { bold: true };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
+        aplicarBordesACelda(pedHeader, i);
+      }
+      
+      productosConPedido.forEach(p => {
+        const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
+        const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, p.unidades_por_caja || 1);
+        let textoPedido = "";
+        if (cajas > 0 && resto > 0) {
+          textoPedido = `${cajas} caja${cajas !== 1 ? 's' : ''} + ${resto} und`;
+        } else if (cajas > 0) {
+          textoPedido = `${cajas} caja${cajas !== 1 ? 's' : ''}`;
+        } else {
+          textoPedido = `${resto} und`;
+        }
+        const row = sh.addRow([p.nombre, p.unidades_por_caja || 1, p.stock, p.cantidad_base, textoPedido]);
+        for (let i = 1; i <= 5; i++) {
+          aplicarBordesACelda(row, i);
+        }
+      });
+      
+      sh.addRow([]);
+      const filaAntesTotal = sh.lastRow;
+      if (filaAntesTotal) {
+        for (let i = 1; i <= NUM_COLUMNAS; i++) {
+          aplicarBordesACelda(filaAntesTotal, i);
+        }
+      }
+      
+      const totalPedidoRow = sh.addRow(["TOTAL A PEDIR", "", "", `${totalPedidosUnidades} unidades`, `${totalCajas} cajas`]);
+      for (let i = 1; i <= 5; i++) {
+        const cell = totalPedidoRow.getCell(i);
+        cell.font = { bold: true };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
+        aplicarBordesACelda(totalPedidoRow, i);
+      }
+    } else {
+      const noPedidoRow = sh.addRow(["✅ Todos los productos tienen stock suficiente"]);
+      sh.mergeCells(`A${noPedidoRow.number}:E${noPedidoRow.number}`);
+      aplicarBordesACelda(noPedidoRow, 1);
+    }
+    
+    sh.addRow([]);
+    const filaVacia5 = sh.lastRow;
+    if (filaVacia5) {
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(filaVacia5, i);
+      }
+    }
+    
+    // ========== GUÍA DE COMPRA RÁPIDA ==========
+    const guiaTitle = sh.addRow(["📋 GUÍA DE COMPRA RÁPIDA"]);
+    const guiaTitleCell = guiaTitle.getCell(1);
+    guiaTitleCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    guiaTitleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF10b981" } };
+    sh.mergeCells(`A${guiaTitle.number}:E${guiaTitle.number}`);
+    aplicarBordesACelda(guiaTitle, 1);
+    
+    if (productosConPedido.length > 0) {
+      const guiaHeader = sh.addRow(["Producto", "Stock Actual", "Cantidad Base", "Faltante", "Pedir (Cajas)"]);
+      for (let i = 1; i <= 5; i++) {
+        const cell = guiaHeader.getCell(i);
+        cell.font = { bold: true };
+        aplicarBordesACelda(guiaHeader, i);
+      }
+      
+      productosConPedido.slice(0, 20).forEach(p => {
+        const faltante = calcularPedidoSugerido(p.stock, p.cantidad_base);
+        const { cajas, resto } = calcularCajasNecesarias(faltante, p.unidades_por_caja || 1);
+        const textoPedido = cajas > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''}${resto > 0 ? ` + ${resto} und` : ''}` : `${resto} und`;
+        const row = sh.addRow([p.nombre, p.stock, p.cantidad_base, faltante, textoPedido]);
+        for (let i = 1; i <= 5; i++) {
+          aplicarBordesACelda(row, i);
+        }
+      });
+    }
+    
+    sh.addRow([]);
+    const filaVacia6 = sh.lastRow;
+    if (filaVacia6) {
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        aplicarBordesACelda(filaVacia6, i);
+      }
+    }
+    
+    // ========== FOOTER ==========
+    const footerRow = sh.addRow([`Reporte generado por Sistema de Inventario - ${new Date().getFullYear()}`]);
+    footerRow.getCell(1).font = { italic: true, size: 10, color: { argb: "FF888888" } };
+    sh.mergeCells(`A${footerRow.number}:E${footerRow.number}`);
+    aplicarBordesACelda(footerRow, 1);
+    
+    // ========== CONFIGURACIÓN DE COLUMNAS ==========
+    sh.columns = [
+      { width: 35 },  // Producto
+      { width: 15 },  // Unid./Caja
+      { width: 15 },  // Stock Actual
+      { width: 18 },  // Pedido Unidades
+      { width: 30 }   // Cajas a Pedir
+    ];
+    
+    // Generar y descargar
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `inventario_${new Date().toLocaleDateString("es-CO").replace(/\//g, "-")}.xlsx`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    
+    mostrarNotificacion('success', "✅ Reporte Excel generado exitosamente");
+  } catch (error) {
+    console.error("Error al exportar:", error);
+    mostrarNotificacion('error', "❌ Error al generar el reporte Excel");
+  }
+};
 
   const now = new Date();
   const hora = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
@@ -1746,6 +2598,18 @@ export default function Home() {
     setUsuario(null); 
     mostrarNotificacion('info', "Sesión cerrada correctamente");
   }, [mostrarNotificacion]);
+
+  // Datos para gráficos del dashboard
+  const stockPorCategoria = CATEGORIAS.map(cat => ({
+    name: cat,
+    stock: productos.filter(p => p.categoria === cat).reduce((sum, p) => sum + p.stock, 0),
+  }));
+
+  const estadoProductos = [
+    { name: "Óptimo", value: stockOptimo, color: "#22c55e" },
+    { name: "Crítico", value: stockCritico, color: "#f97316" },
+    { name: "Agotado", value: sinStock, color: "#ef4444" },
+  ];
 
   if (!usuario) return <LoginScreen onLogin={setUsuario} />;
   if (cargando) return (
@@ -1766,6 +2630,7 @@ export default function Home() {
       default:
         return (
           <div className="p-6">
+            {/* Tarjetas de métricas */}
             <div className="grid grid-cols-5 gap-5 mb-8">
               {[
                 { label: "Total Productos", value: totalProductos, sub: "Productos registrados", color: "#3b82f6", bg: "#1e3a5f", icon: "📦", border: "#3b82f6", tipo: "total" as const },
@@ -1785,21 +2650,81 @@ export default function Home() {
               ))}
             </div>
 
-            <div className="flex gap-3 mb-6 flex-wrap items-center">
-              <div className="relative">
-                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
-                <input type="text" placeholder="Buscar producto..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className="pl-9 pr-4 py-2.5 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm w-72 focus:outline-none focus:border-amber-500 transition-all" />
+            {/* Gráficos del dashboard */}
+            <div className="grid grid-cols-2 gap-6 mb-8">
+              <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4">
+                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">📊 Stock por Categoría</h3>
+                <div style={{ height: 300 }}>
+                  <ResponsiveContainer>
+                    <BarChart data={stockPorCategoria}>
+                      <CartesianGrid stroke="#2a2a3e" strokeDasharray="3 3" />
+                      <XAxis dataKey="name" stroke="#94a3b8" fontSize={10} angle={-45} textAnchor="end" height={80} />
+                      <YAxis stroke="#94a3b8" fontSize={12} />
+                      <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} />
+                      <Bar dataKey="stock" fill="#22c55e" radius={[8,8,0,0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </div>
               </div>
-              <button onClick={() => setCategoriaFiltro(null)} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${!categoriaFiltro ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-md' : 'bg-[#0f1117] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}>Todas las categorías</button>
-              {CATEGORIAS.map(cat => <button key={cat} onClick={() => setCategoriaFiltro(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${categoriaFiltro === cat ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-md' : 'bg-[#0f1117] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}><span>{CATEGORIA_EMOJI[cat]}</span>{cat}</button>)}
+              
+              <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-xl p-4">
+                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">🥧 Estado del Inventario</h3>
+                <div style={{ height: 300 }}>
+                  <ResponsiveContainer>
+                    <PieChart>
+                      <Pie 
+                        data={estadoProductos} 
+                        cx="50%" 
+                        cy="50%" 
+                        labelLine={true} 
+                        label={({ name, percent }) => `${name}: ${(percent * 100).toFixed(0)}%`} 
+                        outerRadius={120} 
+                        dataKey="value"
+                      >
+                        {estadoProductos.map((entry, index) => (
+                          <Cell key={`cell-${index}`} fill={entry.color} />
+                        ))}
+                      </Pie>
+                      <Tooltip contentStyle={{ background: '#0f1117', border: '1px solid #2a2a3e', borderRadius: '8px' }} />
+                      <Legend />
+                    </PieChart>
+                  </ResponsiveContainer>
+                </div>
+              </div>
             </div>
 
+            {/* Búsqueda y filtros */}
+            <div className="flex gap-3 mb-6 flex-wrap items-center">
+              <div className="relative flex-1 max-w-md">
+                <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500">🔍</span>
+                <input 
+                  type="text" 
+                  placeholder="Buscar producto por nombre..." 
+                  value={busqueda} 
+                  onChange={(e) => setBusqueda(e.target.value)} 
+                  className="pl-9 pr-4 py-2.5 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm w-full focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20 transition-all" 
+                />
+              </div>
+              <button onClick={() => setCategoriaFiltro(null)} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${!categoriaFiltro ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-md' : 'bg-[#0f1117] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}>Todas las categorías</button>
+              {CATEGORIAS.map(cat => (
+                <button key={cat} onClick={() => setCategoriaFiltro(cat)} className={`px-4 py-2 rounded-xl text-sm font-medium transition-all flex items-center gap-2 ${categoriaFiltro === cat ? 'bg-gradient-to-r from-amber-600 to-amber-500 text-white shadow-md' : 'bg-[#0f1117] text-slate-400 border border-[#2a2a3e] hover:bg-slate-800'}`}>
+                  <span>{CATEGORIA_EMOJI[cat]}</span>{cat}
+                </button>
+              ))}
+            </div>
+
+            {/* Tabla de productos */}
             <div className="bg-[#0f1117] border border-[#2a2a3e] rounded-2xl overflow-hidden shadow-xl">
               <div className="px-5 py-4 flex items-center justify-between border-b border-[#2a2a3e] bg-[#0a0d16]">
                 <span className="text-base font-semibold text-white">📋 Productos del inventario</span>
                 <div className="relative">
                   <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-500 text-sm">🔍</span>
-                  <input placeholder="Filtrar productos..." value={busqueda} onChange={(e) => setBusqueda(e.target.value)} className="pl-9 pr-4 py-2 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm w-64 focus:outline-none focus:border-amber-500" />
+                  <input 
+                    placeholder="Filtrar productos..." 
+                    value={busqueda} 
+                    onChange={(e) => setBusqueda(e.target.value)} 
+                    className="pl-9 pr-4 py-2 rounded-xl bg-[#0f1117] border border-[#2a2a3e] text-white text-sm w-64 focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20" 
+                  />
                 </div>
               </div>
               <div className="overflow-x-auto">
@@ -1815,9 +2740,11 @@ export default function Home() {
                     </tr>
                   </thead>
                   <tbody>
-                    {productosFiltrados.slice(0, 10).map((p, i) => {
+                    {productosFiltradosAvanzado.slice(0, 10).map((p, i) => {
                       const est = estadoInfo(p);
                       const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
+                      const { cajas, resto } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
+                      const textoPedido = cajas > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''}${resto > 0 ? ` + ${resto}` : ''}` : `${resto} und`;
                       return (
                         <tr key={p.id} className={`border-b border-[#1a1a2a] hover:bg-[#1a1a2a] transition-all ${i % 2 === 0 ? 'bg-transparent' : 'bg-[#0a0d16]/50'}`}>
                           <td className="p-4">
@@ -1830,18 +2757,18 @@ export default function Home() {
                           </td>
                           <td className="p-4 text-center"><span className="text-2xl font-bold" style={{ color: est.color }}>{p.stock}</span></td>
                           <td className="p-4 text-center"><span className="text-lg font-semibold text-blue-400">{p.cantidad_base}</span></td>
-                          <td className="p-4 text-center">{pedido > 0 ? <span className="text-xl font-bold text-orange-400">{pedido}</span> : <span className="text-sm text-green-500">✓</span>}</td>
+                          <td className="p-4 text-center">{pedido > 0 ? <span className="text-xl font-bold text-orange-400">{textoPedido}</span> : <span className="text-sm text-green-500">✓</span>}</td>
                           <td className="p-4"><span className="text-xs px-3 py-1.5 rounded-full font-semibold" style={{ background: est.bg, color: est.color, border: `1px solid ${est.color}40` }}><span className="inline-block w-2 h-2 rounded-full mr-1.5" style={{ background: est.dot }} />{est.label}</span></td>
                           <td className="p-4">
                             <div className="flex gap-2">
                               <button onClick={() => { setPestanaActiva("salida"); setProductoSalida(p.nombre); }} className="px-3 py-1.5 rounded-lg bg-red-500/10 border border-red-500/30 text-red-400 text-xs font-medium hover:bg-red-500/20 transition-all">Salida</button>
-                              <button onClick={() => setModalEditarBase(p)} className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20 transition-all">Editar Base</button>
+                              <button onClick={() => setModalEditarBase(p)} className="px-3 py-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 text-amber-400 text-xs font-medium hover:bg-amber-500/20 transition-all">Editar</button>
                             </div>
                           </td>
                         </tr>
                       );
                     })}
-                    {productosFiltrados.length === 0 && (
+                    {productosFiltradosAvanzado.length === 0 && (
                       <tr>
                         <td colSpan={6} className="text-center py-12 text-slate-500">No se encontraron productos</td>
                       </tr>
@@ -1851,6 +2778,7 @@ export default function Home() {
               </div>
             </div>
 
+            {/* Últimos movimientos */}
             <div className="mt-8">
               <div className="flex justify-between items-center mb-4">
                 <h3 className="text-base font-semibold text-white flex items-center gap-2">📋 Últimos movimientos registrados</h3>
@@ -1865,7 +2793,7 @@ export default function Home() {
                   const prod = productos.find(p => p.id === m.producto_id);
                   const isEntrada = m.tipo === "entrada";
                   return (
-                    <div key={m.id} className="bg-[#0f1117] border rounded-xl px-4 py-2.5 text-sm flex items-center gap-3 shadow-md" style={{ borderColor: isEntrada ? '#166534' : '#991b1b' }}>
+                    <div key={m.id} className="bg-[#0f1117] border rounded-xl px-4 py-2.5 text-sm flex items-center gap-3 shadow-md animate-in slide-in-from-left duration-300" style={{ borderColor: isEntrada ? '#166534' : '#991b1b' }}>
                       <span className="text-xl font-bold" style={{ color: isEntrada ? '#22c55e' : '#ef4444' }}>{isEntrada ? "↑" : "↓"}</span>
                       <span className="font-bold text-lg" style={{ color: isEntrada ? '#22c55e' : '#ef4444' }}>{m.cantidad}</span>
                       <span className="text-white font-medium">{prod?.nombre || "?"}</span>
@@ -1892,8 +2820,8 @@ export default function Home() {
         <div className="flex items-center gap-4">
           <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 flex items-center justify-center text-xl shadow-md">🍺</div>
           <div>
-            <h1 className="text-xl font-bold text-white">INVENTARIO</h1>
-            <p className="text-xs text-slate-200">Sistema profesional de control de inventario</p>
+            <h1 className="text-xl font-bold bg-gradient-to-r from-amber-400 to-amber-600 bg-clip-text text-transparent">INVENTARIO</h1>
+            <p className="text-xs text-slate-400">Sistema profesional de control de inventario</p>
           </div>
         </div>
         <div className="flex items-center gap-4">
@@ -1901,9 +2829,10 @@ export default function Home() {
             <span className="text-sm text-slate-400">↑ Entradas hoy: <strong className="text-green-500 text-lg ml-1">{entradasHoy}</strong></span>
             <span className="text-sm text-slate-400">↓ Salidas hoy: <strong className="text-red-500 text-lg ml-1">{salidasHoy}</strong></span>
           </div>
-          <button onClick={() => setModalEstadisticas(true)} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium transition-all flex items-center gap-2">📊 Estadísticas</button>
-          <button onClick={() => setModalReportes(true)} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium transition-all flex items-center gap-2">📋 Reportes</button>
-          <button onClick={descargarExcel} className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white text-sm font-medium transition-all flex items-center gap-2">📥 Exportar Excel</button>
+          <button onClick={() => setModalEstadisticas(true)} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium transition-all flex items-center gap-2 shadow-md">📊 Estadísticas</button>
+          <button onClick={() => setModalReportes(true)} className="px-4 py-2 rounded-xl bg-slate-800 hover:bg-slate-700 text-white text-sm font-medium transition-all flex items-center gap-2 shadow-md">📋 Reportes</button>
+          <button onClick={descargarExcel} className="px-4 py-2 rounded-xl bg-gradient-to-r from-amber-600 to-amber-500 hover:from-amber-500 hover:to-amber-600 text-white text-sm font-medium transition-all flex items-center gap-2 shadow-md">📥 Exportar Excel</button>
+          <button onClick={() => setModalRestaurarBackup(true)} className="px-4 py-2 rounded-xl bg-purple-500/20 border border-purple-500/30 text-purple-400 text-sm font-medium hover:bg-purple-500/30 transition-all">💾 Backup</button>
           <div className="text-right border-l border-[#2a2a3e] pl-4">
             <div className="text-base font-semibold text-white">{hora}</div>
             <div className="text-xs text-slate-500">{fecha}</div>
@@ -1916,7 +2845,7 @@ export default function Home() {
         <aside className="w-64 bg-[#0f1117] border-r border-[#2a2a3e] flex flex-col flex-shrink-0">
           <div className="p-5 border-b border-[#2a2a3e]">
             <div className="flex items-center gap-3">
-              <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center text-lg">🍺</div>
+              <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center text-lg"></div>
               <div>
                 <div className="text-sm font-semibold text-white">INVENTARIO</div>
                 <div className="text-[10px] text-slate-500">Version 2.0</div>
@@ -1929,22 +2858,26 @@ export default function Home() {
             <div onClick={() => setVistaActual("inventario")} className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${vistaActual === "inventario" ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/10 text-amber-400' : 'text-slate-400 hover:bg-slate-800'}`}><span>📦</span> Inventario <span className="ml-auto bg-red-500 text-white text-[10px] rounded-full px-2 py-0.5">{productos.filter(p => p.stock <= p.stock_minimo).length}</span> <span className="text-[10px] text-slate-500">Ctrl+I</span></div>
             <div onClick={() => setVistaActual("movimientos")} className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer ${vistaActual === "movimientos" ? 'bg-gradient-to-r from-amber-500/20 to-amber-500/10 text-amber-400' : 'text-slate-400 hover:bg-slate-800'}`}><span>🔄</span> Movimientos <span className="text-[10px] text-slate-500">Ctrl+M</span></div>
             <div className="px-3 pt-4 pb-2 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Administración</div>
-            <div onClick={() => setModalAdminProductos(true)} className={`flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer text-slate-400 hover:bg-slate-800`}>
+            <div onClick={() => setModalAdminProductos(true)} className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-sm font-medium transition-all cursor-pointer text-slate-400 hover:bg-slate-800">
               <span>🛠️</span> Admin Productos
             </div>
-            <div className="px-3 pt-4 pb-2 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Análisis</div>
-            <div onClick={() => setModalEstadisticas(true)} className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-400 hover:bg-slate-800 transition-all cursor-pointer text-sm"><span>📈</span> Estadísticas</div>
-            <div onClick={() => setModalReportes(true)} className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-400 hover:bg-slate-800 transition-all cursor-pointer text-sm"><span>📄</span> Reportes</div>
-            <div onClick={descargarExcel} className="flex items-center gap-3 px-4 py-2.5 rounded-xl text-slate-400 hover:bg-slate-800 transition-all cursor-pointer text-sm"><span>📥</span> Exportar Excel</div>
+            <div className="px-3 pt-4 pb-2 text-[10px] text-slate-500 uppercase tracking-wider font-semibold">Atajos de teclado</div>
+            <div className="px-4 py-1 text-xs text-slate-500">Ctrl+I: Inventario</div>
+            <div className="px-4 py-1 text-xs text-slate-500">Ctrl+M: Movimientos</div>
+            <div className="px-4 py-1 text-xs text-slate-500">Ctrl+D: Dashboard</div>
+            <div className="px-4 py-1 text-xs text-slate-500">Ctrl+N: Nuevo ingreso</div>
+            <div className="px-4 py-1 text-xs text-slate-500">Ctrl+S: Nueva salida</div>
+            <div className="px-4 py-1 text-xs text-slate-500">Ctrl+E: Estadísticas</div>
+            <div className="px-4 py-1 text-xs text-slate-500">Ctrl+R: Reportes</div>
           </nav>
           <div className="p-4 border-t border-[#2a2a3e]">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 rounded-full bg-gradient-to-r from-amber-500 to-amber-600 flex items-center justify-center text-white font-semibold text-sm">B</div>
               <div className="flex-1">
-                <div className="text-sm font-medium text-white">Bartender</div>
+                <div className="text-sm font-medium text-white">{usuario?.nombre}</div>
                 <div className="text-[10px] text-green-500 flex items-center gap-1"><span className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></span> En línea</div>
               </div>
-              <button onClick={handleLogout} className="text-slate-500 hover:text-red-400 transition-all text-lg">🚪</button>
+              <button onClick={handleLogout} className="text-slate-500 hover:text-red-400 transition-all text-lg" title="Salir">🚪</button>
             </div>
           </div>
         </aside>
@@ -1961,7 +2894,7 @@ export default function Home() {
                 {productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).slice(0, 5).map(p => (
                   <div key={p.id} className="flex justify-between items-center py-2 px-2 rounded-lg bg-slate-800/50">
                     <span className="text-sm text-slate-300">{p.nombre}</span>
-                    <span className="text-orange-400 font-bold text-base">{p.stock} und</span>
+                    <span className="text-orange-400 font-bold text-base">{p.stock} / {p.stock_minimo} min</span>
                   </div>
                 ))}
                 {productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).length === 0 && <div className="text-center py-4 text-slate-500 text-sm">No hay alertas activas</div>}
@@ -1976,11 +2909,36 @@ export default function Home() {
             <div className="flex-1 overflow-auto p-5">
               {pestanaActiva === "ingreso" ? (
                 <div className="space-y-4">
-                  <div><label className="block text-sm font-medium text-slate-400 mb-2">Producto</label><select value={productoEntrada} onChange={(e) => setProductoEntrada(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500"><option value="">Seleccionar producto...</option>{productos.map(p => <option key={p.id} value={p.nombre}>{p.nombre} — Stock actual: {p.stock}</option>)}</select></div>
-                  <div><label className="block text-sm font-medium text-slate-400 mb-2">Cantidad</label><input type="number" value={cantidadEntrada} onChange={(e) => setCantidadEntrada(e.target.value)} placeholder="Número de unidades" className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" /></div>
-                  <div><label className="block text-sm font-medium text-slate-400 mb-2">Fecha de ingreso</label><input type="date" value={fechaEntrada} onChange={(e) => setFechaEntrada(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" /></div>
-                  <div><label className="block text-sm font-medium text-slate-400 mb-2">Notas</label><textarea value={notasEntrada} onChange={(e) => setNotasEntrada(e.target.value)} rows={3} placeholder="Observaciones adicionales..." className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm resize-none focus:outline-none focus:border-amber-500" /></div>
-                  <button onClick={registrarEntrada} disabled={loadingEntrada || !productoEntrada || !cantidadEntrada} className="w-full py-3 rounded-xl bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-600 text-white font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Producto</label>
+                    <select value={productoEntrada} onChange={(e) => setProductoEntrada(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500 focus:ring-2 focus:ring-amber-500/20">
+                      <option value="">Seleccionar producto...</option>
+                      {productos.map(p => <option key={p.id} value={p.nombre}>{p.nombre} — Stock actual: {p.stock}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Cantidad</label>
+                    <input type="number" value={cantidadEntrada} onChange={(e) => setCantidadEntrada(e.target.value)} placeholder="Número de unidades" className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Motivo</label>
+                    <select value={motivoEntrada} onChange={(e) => setMotivoEntrada(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm">
+                      <option value="Compra">Compra a proveedor</option>
+                      <option value="Devolución">Devolución de cliente</option>
+                      <option value="Ajuste">Ajuste de inventario</option>
+                      <option value="Transferencia">Transferencia</option>
+                      <option value="Otro">Otro</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Fecha de ingreso</label>
+                    <input type="date" value={fechaEntrada} onChange={(e) => setFechaEntrada(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Notas</label>
+                    <textarea value={notasEntrada} onChange={(e) => setNotasEntrada(e.target.value)} rows={3} placeholder="Observaciones adicionales..." className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm resize-none focus:outline-none focus:border-amber-500" />
+                  </div>
+                  <button onClick={registrarEntrada} disabled={loadingEntrada || !productoEntrada || !cantidadEntrada} className="w-full py-3 rounded-xl bg-gradient-to-r from-green-600 to-green-500 hover:from-green-500 hover:to-green-600 text-white font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg">
                     {loadingEntrada ? (
                       <>
                         <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
@@ -1991,9 +2949,32 @@ export default function Home() {
                 </div>
               ) : (
                 <div className="space-y-4">
-                  <div><label className="block text-sm font-medium text-slate-400 mb-2">Producto</label><select value={productoSalida} onChange={(e) => setProductoSalida(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500"><option value="">Seleccionar producto...</option>{productos.map(p => <option key={p.id} value={p.nombre}>{p.nombre} — Stock actual: {p.stock}</option>)}</select></div>
-                  <div><label className="block text-sm font-medium text-slate-400 mb-2">Cantidad</label><input type="number" value={cantidadSalida} onChange={(e) => setCantidadSalida(e.target.value)} placeholder="Número de unidades" className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" /></div>
-                  <div><label className="block text-sm font-medium text-slate-400 mb-2">Notas</label><textarea value={notasSalida} onChange={(e) => setNotasSalida(e.target.value)} rows={3} placeholder="Observaciones..." className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm resize-none focus:outline-none focus:border-amber-500" /></div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Producto</label>
+                    <select value={productoSalida} onChange={(e) => setProductoSalida(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500">
+                      <option value="">Seleccionar producto...</option>
+                      {productos.map(p => <option key={p.id} value={p.nombre}>{p.nombre} — Stock actual: {p.stock}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Cantidad</label>
+                    <input type="number" value={cantidadSalida} onChange={(e) => setCantidadSalida(e.target.value)} placeholder="Número de unidades" className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm focus:outline-none focus:border-amber-500" />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Motivo</label>
+                    <select value={motivoSalida} onChange={(e) => setMotivoSalida(e.target.value)} className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm">
+                      <option value="Venta">Venta</option>
+                      <option value="Merma">Merma / Pérdida</option>
+                      <option value="Transferencia">Transferencia</option>
+                      <option value="Cortesía">Cortesía / Muestra</option>
+                      <option value="Ajuste">Ajuste de inventario</option>
+                      <option value="Otro">Otro</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-400 mb-2">Notas</label>
+                    <textarea value={notasSalida} onChange={(e) => setNotasSalida(e.target.value)} rows={3} placeholder="Observaciones..." className="w-full px-4 py-3 rounded-xl bg-[#0a0d16] border border-[#2a2a3e] text-white text-sm resize-none focus:outline-none focus:border-amber-500" />
+                  </div>
                   {productoSalida && cantidadSalida && (
                     <div className="p-4 rounded-xl bg-red-500/10 border border-red-500/30">
                       <span className="text-sm text-slate-400">Stock restante: </span>
@@ -2001,7 +2982,7 @@ export default function Home() {
                       <span className="text-slate-400 text-sm ml-1">unidades</span>
                     </div>
                   )}
-                  <button onClick={registrarSalida} disabled={loadingSalida || !productoSalida || !cantidadSalida} className="w-full py-3 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2">
+                  <button onClick={registrarSalida} disabled={loadingSalida || !productoSalida || !cantidadSalida} className="w-full py-3 rounded-xl bg-gradient-to-r from-red-600 to-red-500 hover:from-red-500 hover:to-red-600 text-white font-semibold transition-all disabled:opacity-50 flex items-center justify-center gap-2 shadow-lg">
                     {loadingSalida ? (
                       <>
                         <div className="animate-spin rounded-full h-5 w-5 border-2 border-white border-t-transparent"></div>
@@ -2037,6 +3018,13 @@ export default function Home() {
           onActualizado={async () => {
             await cargarProductos();
           }}
+          mostrarNotificacion={mostrarNotificacion}
+        />
+      )}
+      {modalRestaurarBackup && (
+        <ModalRestaurarBackup 
+          onClose={() => setModalRestaurarBackup(false)}
+          onRestaurar={handleRestaurarBackup}
           mostrarNotificacion={mostrarNotificacion}
         />
       )}
