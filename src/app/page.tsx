@@ -25,7 +25,7 @@ type Producto = {
   stock: number;
   stock_minimo: number;
   cantidad_base: number;
-  unidades_por_caja: number;  // NUEVO: cuántas unidades vienen por caja/paca
+  unidades_por_caja: number;
   ubicacion?: string;
   created_at?: string;
   ultima_actualizacion?: string;
@@ -202,7 +202,6 @@ function calcularPedidoSugerido(stock: number, cantidadBase: number): number {
   return deficit > 0 ? deficit : 0;
 }
 
-// NUEVA FUNCIÓN: Calcular cajas necesarias
 function calcularCajasNecesarias(unidades: number, unidadesPorCaja: number): { cajas: number; resto: number } {
   if (!unidadesPorCaja || unidadesPorCaja <= 0) return { cajas: 0, resto: unidades };
   const cajas = Math.floor(unidades / unidadesPorCaja);
@@ -429,7 +428,7 @@ function ModalDetalle({ tipo, productos, onClose }: { tipo: string; productos: P
                     <th className="pb-4 text-right">Stock Mínimo</th>
                   )}
                   <th className="pb-4 text-right">Ubicación</th>
-                </tr>
+                 </tr>
               </thead>
               <tbody>
                 {productosFiltrados.map((p, idx) => {
@@ -563,7 +562,6 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
   }, [movimientos]);
 
   const valorInventario = useMemo(() => {
-    // Esto es un estimado - idealmente tendrías precios en la DB
     return productos.reduce((sum, p) => sum + (p.stock * 15000), 0);
   }, [productos]);
 
@@ -575,7 +573,6 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
           <button onClick={onClose} className="w-10 h-10 rounded-xl bg-slate-800 hover:bg-slate-700 text-slate-400 hover:text-white text-xl transition-all flex items-center justify-center">✕</button>
         </div>
         
-        {/* Métricas clave */}
         <div className="grid grid-cols-4 gap-4 mb-8">
           <div className="bg-gradient-to-br from-blue-500/10 to-blue-600/5 rounded-xl p-4 text-center border border-blue-500/30">
             <div className="text-2xl font-bold text-blue-400">{rotacionInventario}x</div>
@@ -595,7 +592,6 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
           </div>
         </div>
         
-        {/* Gráfico de stock por categoría */}
         <div className="mb-8">
           <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">📊 Stock por Categoría</h3>
           <div style={{ height: 400 }}>
@@ -612,7 +608,6 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
           </div>
         </div>
         
-        {/* Gráfico de evolución 30 días */}
         <div className="mb-8">
           <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">📈 Evolución últimos 30 días</h3>
           <div style={{ height: 400 }}>
@@ -630,7 +625,6 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
           </div>
         </div>
         
-        {/* Movimientos últimos 7 días */}
         <div className="mb-8">
           <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">🔄 Movimientos últimos 7 días</h3>
           <div style={{ height: 400 }}>
@@ -648,7 +642,6 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
           </div>
         </div>
         
-        {/* Top 10 productos más vendidos */}
         <div className="mb-8">
           <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">🏆 Top 10 productos más vendidos</h3>
           <div style={{ height: 500 }}>
@@ -666,7 +659,6 @@ function ModalEstadisticas({ productos, movimientos, onClose }: { productos: Pro
           </div>
         </div>
         
-        {/* Distribución por categoría */}
         <div className="mb-6">
           <h3 className="text-base font-semibold text-slate-300 mb-4 flex items-center gap-2">🥧 Distribución de Stock por Categoría</h3>
           <div style={{ height: 450 }}>
@@ -725,7 +717,6 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
       const wb = new ExcelJS.Workbook();
       const sh = wb.addWorksheet("Reporte_Movimientos");
       
-      // Estilos
       const headerStyle = {
         font: { bold: true, size: 12, color: { argb: "FFFFFFFF" } },
         fill: { type: "pattern" as const, pattern: "solid", fgColor: { argb: "FF1f2937" } }
@@ -753,7 +744,6 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
       
       sh.columns = [{ width: 20 }, { width: 35 }, { width: 18 }, { width: 12 }, { width: 12 }, { width: 25 }, { width: 35 }, { width: 15 }];
       
-      // Resumen
       sh.addRow([]);
       const resumenRow = sh.addRow(["RESUMEN DEL PERÍODO"]);
       resumenRow.font = { bold: true, size: 14 };
@@ -784,7 +774,6 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
     try {
       const doc = new jsPDF();
       
-      // Título
       doc.setFontSize(18);
       doc.setTextColor(251, 191, 36);
       doc.text("Reporte de Movimientos de Inventario", 14, 20);
@@ -794,7 +783,6 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
       doc.text(`Período: ${fechaInicio} al ${fechaFin}`, 14, 30);
       doc.text(`Generado: ${new Date().toLocaleString("es-CO")}`, 14, 36);
       
-      // Resumen
       doc.setFontSize(12);
       doc.setTextColor(0);
       doc.text("Resumen:", 14, 48);
@@ -803,7 +791,6 @@ function ModalReportes({ productos, movimientos, onClose }: { productos: Product
       doc.text(`Total entradas: ${movimientosFiltrados.filter(m => m.tipo === "entrada").reduce((s, m) => s + m.cantidad, 0)} unidades`, 20, 62);
       doc.text(`Total salidas: ${movimientosFiltrados.filter(m => m.tipo === "salida").reduce((s, m) => s + m.cantidad, 0)} unidades`, 20, 68);
       
-      // Tabla de movimientos
       const tableData = movimientosFiltrados.slice(0, 100).map(m => {
         const prod = productos.find(p => p.id === m.producto_id);
         return [
@@ -941,7 +928,7 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
   const [stock, setStock] = useState("");
   const [stockMinimo, setStockMinimo] = useState("");
   const [cantidadBase, setCantidadBase] = useState("");
-  const [unidadesPorCaja, setUnidadesPorCaja] = useState(""); // NUEVO
+  const [unidadesPorCaja, setUnidadesPorCaja] = useState("");
   const [ubicacion, setUbicacion] = useState("");
   const [cargando, setCargando] = useState(false);
   const [productoAEliminar, setProductoAEliminar] = useState<number | null>(null);
@@ -1238,7 +1225,6 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
                 <p className="text-xs text-slate-500 mt-1">Ej: Si siempre necesitas 100 cervezas, pon 100</p>
               </div>
 
-              {/* NUEVO CAMPO: Unidades por Caja */}
               <div>
                 <label className="block text-sm font-medium text-slate-400 mb-2">
                   📦 Unidades por Caja / Paca *
@@ -1429,7 +1415,7 @@ function ModalAdminProductos({ onClose, productos, onProductoCreado, mostrarNoti
   );
 }
 
-// ==================== MODAL EDITAR CANTIDAD BASE (MEJORADO) ====================
+// ==================== MODAL EDITAR CANTIDAD BASE ====================
 
 function ModalEditarCantidadBase({ producto, onClose, onActualizado, mostrarNotificacion }: { producto: Producto; onClose: () => void; onActualizado: () => void; mostrarNotificacion: (tipo: Notificacion['tipo'], mensaje: string) => void }) {
   const [cantidadBase, setCantidadBase] = useState(producto.cantidad_base?.toString() || "");
@@ -1910,7 +1896,7 @@ function VistaMovimientos({ movimientos, productos }: { movimientos: Movimiento[
                 </tr>
               )}
             </tbody>
-          </table>
+           </table>
         </div>
         
         {totalPaginas > 1 && (
@@ -2155,439 +2141,311 @@ export default function Home() {
   const salidasHoy = movimientos.filter(m => m.tipo === "salida" && new Date(m.created_at).toDateString() === new Date().toDateString()).reduce((s, m) => s + m.cantidad, 0);
   const movimientosFiltradosHome = movimientos.filter(m => filtroMovimientos === "entradas" ? m.tipo === "entrada" : filtroMovimientos === "salidas" ? m.tipo === "salida" : true);
 
-  const registrarEntrada = async () => {
-    if (!productoEntrada || !cantidadEntrada) { 
-      mostrarNotificacion('error', "Completa todos los campos");
-      return; 
-    }
-    
-    const cantidadValid = validateCantidad(cantidadEntrada);
-    if (!cantidadValid.valida) {
-      mostrarNotificacion('error', cantidadValid.error || "Cantidad inválida");
-      return;
-    }
-    
-    const prod = productos.find(p => p.nombre === productoEntrada);
-    if (!prod) return;
-    
-    setLoadingEntrada(true);
-    const cantidad = parseInt(cantidadEntrada);
-    
-    try {
-      await supabase.from("productos").update({ stock: prod.stock + cantidad }).eq("id", prod.id);
-      await supabase.from("movimientos").insert({ 
-        producto_id: prod.id, 
-        tipo: "entrada", 
-        cantidad, 
-        motivo: motivoEntrada, 
-        fecha: fechaEntrada, 
-        notas: notasEntrada,
-        usuario: usuario?.nombre
-      });
-      
-      setProductoEntrada(""); 
-      setCantidadEntrada(""); 
-      setNotasEntrada("");
-      setMotivoEntrada("Compra");
-      setFechaEntrada(new Date().toISOString().split('T')[0]);
-      await cargarProductos(); 
-      await cargarMovimientos();
-      mostrarNotificacion('success', `✅ Ingreso de ${cantidad} unidades registrado correctamente`);
-    } catch (error) {
-      mostrarNotificacion('error', "Error al registrar el ingreso");
-    } finally {
-      setLoadingEntrada(false);
-    }
-  };
-
-  const registrarSalida = async () => {
-    if (!productoSalida || !cantidadSalida) { 
-      mostrarNotificacion('error', "Completa todos los campos");
-      return; 
-    }
-    
-    const cantidadValid = validateCantidad(cantidadSalida);
-    if (!cantidadValid.valida) {
-      mostrarNotificacion('error', cantidadValid.error || "Cantidad inválida");
-      return;
-    }
-    
-    const prod = productos.find(p => p.nombre === productoSalida);
-    if (!prod) return;
-    
-    const cantidad = parseInt(cantidadSalida);
-    if (cantidad > prod.stock) { 
-      mostrarNotificacion('error', `Stock insuficiente. Solo hay ${prod.stock} unidades disponibles`);
-      return; 
-    }
-    
-    setLoadingSalida(true);
-    
-    try {
-      await supabase.from("productos").update({ stock: prod.stock - cantidad }).eq("id", prod.id);
-      await supabase.from("movimientos").insert({ 
-        producto_id: prod.id, 
-        tipo: "salida", 
-        cantidad, 
-        motivo: motivoSalida, 
-        notas: notasSalida,
-        usuario: usuario?.nombre
-      });
-      
-      setProductoSalida(""); 
-      setCantidadSalida(""); 
-      setNotasSalida("");
-      setMotivoSalida("Venta");
-      await cargarProductos(); 
-      await cargarMovimientos();
-      mostrarNotificacion('success', `✅ Salida de ${cantidad} unidades registrada correctamente`);
-    } catch (error) {
-      mostrarNotificacion('error', "Error al registrar la salida");
-    } finally {
-      setLoadingSalida(false);
-    }
-  };
-
-  // ==================== FUNCIÓN DE EXPORTACIÓN A EXCEL MEJORADA ====================
-  const descargarExcel = async () => {
+  // ✅ FUNCIÓN CORREGIDA PARA REGISTRAR ENTRADAS
+ const registrarEntrada = async () => {
+  if (!productoEntrada || !cantidadEntrada) { 
+    mostrarNotificacion('error', "Completa todos los campos");
+    return; 
+  }
+  
+  const cantidadValid = validateCantidad(cantidadEntrada);
+  if (!cantidadValid.valida) {
+    mostrarNotificacion('error', cantidadValid.error || "Cantidad inválida");
+    return;
+  }
+  
+  const prod = productos.find(p => p.nombre === productoEntrada);
+  if (!prod) {
+    mostrarNotificacion('error', "Producto no encontrado");
+    return;
+  }
+  
+  setLoadingEntrada(true);
+  const cantidad = parseInt(cantidadEntrada);
+  
   try {
-    const wb = new ExcelJS.Workbook();
-    const sh = wb.addWorksheet("Inventario");
-    
-    // Número fijo de columnas que usamos
-    const NUM_COLUMNAS = 5;
-    const letras = ['A', 'B', 'C', 'D', 'E'];
-    
-    // Función para aplicar bordes solo a celdas específicas
-    const aplicarBordesACelda = (row: any, col: number) => {
-      const cell = row.getCell(col);
-      cell.border = {
-        top: { style: "thin" },
-        left: { style: "thin" },
-        bottom: { style: "thin" },
-        right: { style: "thin" }
-      };
-    };
-    
-    // ========== TÍTULO PRINCIPAL ==========
-    const tituloRow = sh.addRow(["INFORME DE INVENTARIO"]);
-    tituloRow.getCell(1).font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
-    tituloRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfbbf24" } };
-    tituloRow.height = 30;
-    sh.mergeCells(`A${tituloRow.number}:E${tituloRow.number}`);
-    // Aplicar bordes solo a la celda combinada (que es la A)
-    aplicarBordesACelda(tituloRow, 1);
-    
-    // ========== FECHA ==========
-    const fechaRow = sh.addRow([`Fecha de generación: ${new Date().toLocaleString("es-CO")}`]);
-    fechaRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
-    sh.mergeCells(`A${fechaRow.number}:E${fechaRow.number}`);
-    aplicarBordesACelda(fechaRow, 1);
-    
-    // ========== USUARIO ==========
-    const usuarioRow = sh.addRow([`Generado por: ${usuario?.nombre || "Bartender"}`]);
-    usuarioRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
-    sh.mergeCells(`A${usuarioRow.number}:E${usuarioRow.number}`);
-    aplicarBordesACelda(usuarioRow, 1);
-    
-    sh.addRow([]);
-    const filaVacia = sh.lastRow;
-    if (filaVacia) {
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(filaVacia, i);
-      }
-    }
-    
-    // ========== ENCABEZADOS ==========
-    const headers = ["Producto", "Unid./Caja", "Stock Actual", "Pedido (Unid.)", "Cajas a Pedir"];
-    const headerRow = sh.addRow(headers);
-    for (let i = 1; i <= headers.length; i++) {
-      const cell = headerRow.getCell(i);
-      cell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1f2937" } };
-      aplicarBordesACelda(headerRow, i);
-    }
-    headerRow.height = 25;
-    
-    // ========== DATOS DE PRODUCTOS ==========
-    productos.forEach((p) => {
-      const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
-      const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, p.unidades_por_caja || 1);
-      
-      let textoCajas = "";
-      if (cajas > 0 && resto > 0) {
-        textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''} + ${resto} und`;
-      } else if (cajas > 0) {
-        textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''}`;
-      } else if (resto > 0) {
-        textoCajas = `${resto} unidades sueltas`;
-      } else {
-        textoCajas = "0";
-      }
-      
-      const row = sh.addRow([
-        p.nombre, 
-        p.unidades_por_caja || 1, 
-        p.stock, 
-        pedidoUnidades, 
-        textoCajas
-      ]);
-      
-      // Aplicar bordes a todas las celdas de la fila
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(row, i);
-      }
-      
-      // Resaltar productos con pedido sugerido
-      if (pedidoUnidades > 0) {
-        const cellPedido = row.getCell(4);
-        cellPedido.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-        cellPedido.font = { color: { argb: "FFef4444" }, bold: true };
-        
-        const cellCajas = row.getCell(5);
-        cellCajas.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
-        cellCajas.font = { color: { argb: "FFf97316" }, bold: true };
-      }
-      
-      // Resaltar stock crítico
-      if (p.stock <= p.stock_minimo) {
-        const cellStock = row.getCell(3);
-        cellStock.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-        cellStock.font = { color: { argb: "FFef4444" }, bold: true };
-      }
+    console.log("Registrando entrada:", {
+      producto: prod.nombre,
+      cantidad,
+      stock_actual: prod.stock,
+      nuevo_stock: prod.stock + cantidad
     });
     
-    // ========== FILA DE TOTALES ==========
-    const totalStock = productos.reduce((sum, p) => sum + p.stock, 0);
-    const totalPedidosUnidades = productos.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
-    const totalCajas = productos.reduce((sum, p) => {
-      const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
-      const { cajas } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
-      return sum + cajas;
-    }, 0);
+    // 1. Actualizar stock del producto
+    const { error: stockError } = await supabase
+      .from("productos")
+      .update({ stock: prod.stock + cantidad })
+      .eq("id", prod.id);
     
-    const totalRow = sh.addRow(["TOTALES", "", totalStock, totalPedidosUnidades, `${totalCajas} cajas`]);
-    for (let i = 1; i <= NUM_COLUMNAS; i++) {
-      const cell = totalRow.getCell(i);
-      cell.font = { bold: true };
-      cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFe5e7eb" } };
-      aplicarBordesACelda(totalRow, i);
+    if (stockError) {
+      console.error("Error al actualizar stock:", stockError);
+      throw new Error(stockError.message);
     }
     
-    sh.addRow([]);
-    const filaVacia2 = sh.lastRow;
-    if (filaVacia2) {
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(filaVacia2, i);
-      }
-    }
-    
-    // ========== RESULTADOS CLAVE ==========
-    const resumenTitle = sh.addRow(["📊 RESULTADOS CLAVE"]);
-    const titleCell = resumenTitle.getCell(1);
-    titleCell.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
-    titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF3b82f6" } };
-    sh.mergeCells(`A${resumenTitle.number}:E${resumenTitle.number}`);
-    aplicarBordesACelda(resumenTitle, 1);
-    
-    // Filas de resultados
-    const resultados = [
-      ["Total de productos en inventario", "", "", "", productos.length],
-      ["Unidades totales en stock", "", "", "", totalStock],
-      ["Unidades que deben pedirse", "", "", "", totalPedidosUnidades],
-      ["Cajas totales a pedir", "", "", "", totalCajas],
-      ["Productos con stock crítico", "", "", "", productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).length],
-      ["Productos agotados (stock 0)", "", "", "", productos.filter(p => p.stock === 0).length]
-    ];
-    
-    resultados.forEach(fila => {
-      const row = sh.addRow(fila);
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(row, i);
-        if (i === 5) {
-          row.getCell(i).font = { bold: true };
-        }
-      }
-    });
-    
-    sh.addRow([]);
-    const filaVacia3 = sh.lastRow;
-    if (filaVacia3) {
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(filaVacia3, i);
-      }
-    }
-    
-    // ========== PRODUCTOS CON STOCK CRÍTICO ==========
-    const criticosTitle = sh.addRow(["⚠️ PRODUCTOS CON STOCK CRÍTICO"]);
-    const critTitleCell = criticosTitle.getCell(1);
-    critTitleCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-    critTitleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFef4444" } };
-    sh.mergeCells(`A${criticosTitle.number}:E${criticosTitle.number}`);
-    aplicarBordesACelda(criticosTitle, 1);
-    
-    const productosCriticos = productos.filter(p => p.stock <= p.stock_minimo);
-    if (productosCriticos.length > 0) {
-      const critHeader = sh.addRow(["Producto", "Unid./Caja", "Stock Actual", "Stock Mínimo", "Déficit"]);
-      for (let i = 1; i <= 5; i++) {
-        const cell = critHeader.getCell(i);
-        cell.font = { bold: true };
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-        aplicarBordesACelda(critHeader, i);
-      }
-      
-      productosCriticos.forEach(p => {
-        const deficit = p.stock_minimo - p.stock;
-        const deficitCajas = Math.ceil(deficit / (p.unidades_por_caja || 1));
-        const row = sh.addRow([p.nombre, p.unidades_por_caja || 1, p.stock, p.stock_minimo, `${deficit > 0 ? deficit : 0} und (${deficitCajas} cajas aprox)`]);
-        for (let i = 1; i <= 5; i++) {
-          aplicarBordesACelda(row, i);
-        }
+    // 2. Insertar movimiento - USANDO 'fecha' en lugar de 'created_at'
+    const { error: movError } = await supabase
+      .from("movimientos")
+      .insert({ 
+        producto_id: prod.id, 
+        tipo: "entrada",      // ← aquí se registra si es entrada o salida
+        cantidad, 
+        motivo: motivoEntrada,
+        fecha: fechaEntrada,   // ← CORREGIDO: usar 'fecha' en lugar de 'created_at'
+        notas: notasEntrada || null,
+        proveedor: null,       // opcional, puedes agregar un campo para proveedor si lo necesitas
+        factura: null,         // opcional
+        // created_at se llenará automáticamente con NOW() en la BD
       });
-    } else {
-      const noCriticosRow = sh.addRow(["✅ No hay productos con stock crítico"]);
-      sh.mergeCells(`A${noCriticosRow.number}:E${noCriticosRow.number}`);
-      aplicarBordesACelda(noCriticosRow, 1);
+    
+    if (movError) {
+      console.error("Error al insertar movimiento:", movError);
+      throw new Error(movError.message);
     }
     
-    sh.addRow([]);
-    const filaVacia4 = sh.lastRow;
-    if (filaVacia4) {
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(filaVacia4, i);
-      }
-    }
+    console.log("Entrada registrada exitosamente");
     
-    // ========== PRODUCTOS QUE NECESITAN PEDIDO ==========
-    const pedidoTitle = sh.addRow(["🛒 PRODUCTOS QUE NECESITAN PEDIDO"]);
-    const pedTitleCell = pedidoTitle.getCell(1);
-    pedTitleCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-    pedTitleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFf97316" } };
-    sh.mergeCells(`A${pedidoTitle.number}:E${pedidoTitle.number}`);
-    aplicarBordesACelda(pedidoTitle, 1);
+    // Limpiar formulario
+    setProductoEntrada(""); 
+    setCantidadEntrada(""); 
+    setNotasEntrada("");
+    setMotivoEntrada("Compra");
+    setFechaEntrada(new Date().toISOString().split('T')[0]);
     
-    const productosConPedido = productos.filter(p => calcularPedidoSugerido(p.stock, p.cantidad_base) > 0);
-    if (productosConPedido.length > 0) {
-      const pedHeader = sh.addRow(["Producto", "Unid./Caja", "Stock Actual", "Cantidad Base", "Pedido"]);
-      for (let i = 1; i <= 5; i++) {
-        const cell = pedHeader.getCell(i);
-        cell.font = { bold: true };
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
-        aplicarBordesACelda(pedHeader, i);
-      }
-      
-      productosConPedido.forEach(p => {
-        const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
-        const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, p.unidades_por_caja || 1);
-        let textoPedido = "";
-        if (cajas > 0 && resto > 0) {
-          textoPedido = `${cajas} caja${cajas !== 1 ? 's' : ''} + ${resto} und`;
-        } else if (cajas > 0) {
-          textoPedido = `${cajas} caja${cajas !== 1 ? 's' : ''}`;
-        } else {
-          textoPedido = `${resto} und`;
-        }
-        const row = sh.addRow([p.nombre, p.unidades_por_caja || 1, p.stock, p.cantidad_base, textoPedido]);
-        for (let i = 1; i <= 5; i++) {
-          aplicarBordesACelda(row, i);
-        }
-      });
-      
-      sh.addRow([]);
-      const filaAntesTotal = sh.lastRow;
-      if (filaAntesTotal) {
-        for (let i = 1; i <= NUM_COLUMNAS; i++) {
-          aplicarBordesACelda(filaAntesTotal, i);
-        }
-      }
-      
-      const totalPedidoRow = sh.addRow(["TOTAL A PEDIR", "", "", `${totalPedidosUnidades} unidades`, `${totalCajas} cajas`]);
-      for (let i = 1; i <= 5; i++) {
-        const cell = totalPedidoRow.getCell(i);
-        cell.font = { bold: true };
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
-        aplicarBordesACelda(totalPedidoRow, i);
-      }
-    } else {
-      const noPedidoRow = sh.addRow(["✅ Todos los productos tienen stock suficiente"]);
-      sh.mergeCells(`A${noPedidoRow.number}:E${noPedidoRow.number}`);
-      aplicarBordesACelda(noPedidoRow, 1);
-    }
+    // Recargar datos
+    await cargarProductos(); 
+    await cargarMovimientos();
     
-    sh.addRow([]);
-    const filaVacia5 = sh.lastRow;
-    if (filaVacia5) {
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(filaVacia5, i);
-      }
-    }
-    
-    // ========== GUÍA DE COMPRA RÁPIDA ==========
-    const guiaTitle = sh.addRow(["📋 GUÍA DE COMPRA RÁPIDA"]);
-    const guiaTitleCell = guiaTitle.getCell(1);
-    guiaTitleCell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-    guiaTitleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF10b981" } };
-    sh.mergeCells(`A${guiaTitle.number}:E${guiaTitle.number}`);
-    aplicarBordesACelda(guiaTitle, 1);
-    
-    if (productosConPedido.length > 0) {
-      const guiaHeader = sh.addRow(["Producto", "Stock Actual", "Cantidad Base", "Faltante", "Pedir (Cajas)"]);
-      for (let i = 1; i <= 5; i++) {
-        const cell = guiaHeader.getCell(i);
-        cell.font = { bold: true };
-        aplicarBordesACelda(guiaHeader, i);
-      }
-      
-      productosConPedido.slice(0, 20).forEach(p => {
-        const faltante = calcularPedidoSugerido(p.stock, p.cantidad_base);
-        const { cajas, resto } = calcularCajasNecesarias(faltante, p.unidades_por_caja || 1);
-        const textoPedido = cajas > 0 ? `${cajas} caja${cajas !== 1 ? 's' : ''}${resto > 0 ? ` + ${resto} und` : ''}` : `${resto} und`;
-        const row = sh.addRow([p.nombre, p.stock, p.cantidad_base, faltante, textoPedido]);
-        for (let i = 1; i <= 5; i++) {
-          aplicarBordesACelda(row, i);
-        }
-      });
-    }
-    
-    sh.addRow([]);
-    const filaVacia6 = sh.lastRow;
-    if (filaVacia6) {
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        aplicarBordesACelda(filaVacia6, i);
-      }
-    }
-    
-    // ========== FOOTER ==========
-    const footerRow = sh.addRow([`Reporte generado por Sistema de Inventario - ${new Date().getFullYear()}`]);
-    footerRow.getCell(1).font = { italic: true, size: 10, color: { argb: "FF888888" } };
-    sh.mergeCells(`A${footerRow.number}:E${footerRow.number}`);
-    aplicarBordesACelda(footerRow, 1);
-    
-    // ========== CONFIGURACIÓN DE COLUMNAS ==========
-    sh.columns = [
-      { width: 35 },  // Producto
-      { width: 15 },  // Unid./Caja
-      { width: 15 },  // Stock Actual
-      { width: 18 },  // Pedido Unidades
-      { width: 30 }   // Cajas a Pedir
-    ];
-    
-    // Generar y descargar
-    const buf = await wb.xlsx.writeBuffer();
-    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-    const url = window.URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `inventario_${new Date().toLocaleDateString("es-CO").replace(/\//g, "-")}.xlsx`;
-    a.click();
-    window.URL.revokeObjectURL(url);
-    
-    mostrarNotificacion('success', "✅ Reporte Excel generado exitosamente");
-  } catch (error) {
-    console.error("Error al exportar:", error);
-    mostrarNotificacion('error', "❌ Error al generar el reporte Excel");
+    mostrarNotificacion('success', `✅ Ingreso de ${cantidad} unidades de "${prod.nombre}" registrado correctamente`);
+  } catch (error: any) {
+    console.error("Error al registrar entrada:", error);
+    mostrarNotificacion('error', `Error al registrar el ingreso: ${error.message || "Error desconocido"}`);
+  } finally {
+    setLoadingEntrada(false);
   }
 };
+
+  // ✅ FUNCIÓN CORREGIDA PARA REGISTRAR SALIDAS
+  const registrarSalida = async () => {
+  if (!productoSalida || !cantidadSalida) { 
+    mostrarNotificacion('error', "Completa todos los campos");
+    return; 
+  }
+  
+  const cantidadValid = validateCantidad(cantidadSalida);
+  if (!cantidadValid.valida) {
+    mostrarNotificacion('error', cantidadValid.error || "Cantidad inválida");
+    return;
+  }
+  
+  const prod = productos.find(p => p.nombre === productoSalida);
+  if (!prod) {
+    mostrarNotificacion('error', "Producto no encontrado");
+    return;
+  }
+  
+  const cantidad = parseInt(cantidadSalida);
+  if (cantidad > prod.stock) { 
+    mostrarNotificacion('error', `Stock insuficiente. Solo hay ${prod.stock} unidades disponibles`);
+    return; 
+  }
+  
+  setLoadingSalida(true);
+  
+  try {
+    console.log("Registrando salida:", {
+      producto: prod.nombre,
+      cantidad,
+      stock_actual: prod.stock,
+      nuevo_stock: prod.stock - cantidad
+    });
+    
+    // 1. Actualizar stock del producto
+    const { error: stockError } = await supabase
+      .from("productos")
+      .update({ stock: prod.stock - cantidad })
+      .eq("id", prod.id);
+    
+    if (stockError) {
+      console.error("Error al actualizar stock:", stockError);
+      throw new Error(stockError.message);
+    }
+    
+    // 2. Insertar movimiento - USANDO 'fecha' en lugar de 'created_at'
+    const { error: movError } = await supabase
+      .from("movimientos")
+      .insert({ 
+        producto_id: prod.id, 
+        tipo: "salida",       // ← aquí se registra si es entrada o salida
+        cantidad, 
+        motivo: motivoSalida,
+        fecha: new Date().toISOString().split('T')[0], // fecha actual
+        notas: notasSalida || null,
+        proveedor: null,
+        factura: null,
+      });
+    
+    if (movError) {
+      console.error("Error al insertar movimiento:", movError);
+      throw new Error(movError.message);
+    }
+    
+    console.log("Salida registrada exitosamente");
+    
+    // Limpiar formulario
+    setProductoSalida(""); 
+    setCantidadSalida(""); 
+    setNotasSalida("");
+    setMotivoSalida("Venta");
+    
+    // Recargar datos
+    await cargarProductos(); 
+    await cargarMovimientos();
+    
+    mostrarNotificacion('success', `✅ Salida de ${cantidad} unidades de "${prod.nombre}" registrada correctamente`);
+  } catch (error: any) {
+    console.error("Error al registrar salida:", error);
+    mostrarNotificacion('error', `Error al registrar la salida: ${error.message || "Error desconocido"}`);
+  } finally {
+    setLoadingSalida(false);
+  }
+};
+
+  // ==================== FUNCIÓN DE EXPORTACIÓN A EXCEL ====================
+  const descargarExcel = async () => {
+    try {
+      const wb = new ExcelJS.Workbook();
+      const sh = wb.addWorksheet("Inventario");
+      
+      const NUM_COLUMNAS = 5;
+      
+      const aplicarBordesACelda = (row: any, col: number) => {
+        const cell = row.getCell(col);
+        cell.border = {
+          top: { style: "thin" },
+          left: { style: "thin" },
+          bottom: { style: "thin" },
+          right: { style: "thin" }
+        };
+      };
+      
+      const tituloRow = sh.addRow(["INFORME DE INVENTARIO"]);
+      tituloRow.getCell(1).font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
+      tituloRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfbbf24" } };
+      tituloRow.height = 30;
+      sh.mergeCells(`A${tituloRow.number}:E${tituloRow.number}`);
+      aplicarBordesACelda(tituloRow, 1);
+      
+      const fechaRow = sh.addRow([`Fecha de generación: ${new Date().toLocaleString("es-CO")}`]);
+      fechaRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
+      sh.mergeCells(`A${fechaRow.number}:E${fechaRow.number}`);
+      aplicarBordesACelda(fechaRow, 1);
+      
+      const usuarioRow = sh.addRow([`Generado por: ${usuario?.nombre || "Bartender"}`]);
+      usuarioRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
+      sh.mergeCells(`A${usuarioRow.number}:E${usuarioRow.number}`);
+      aplicarBordesACelda(usuarioRow, 1);
+      
+      sh.addRow([]);
+      const filaVacia = sh.lastRow;
+      if (filaVacia) {
+        for (let i = 1; i <= NUM_COLUMNAS; i++) {
+          aplicarBordesACelda(filaVacia, i);
+        }
+      }
+      
+      const headers = ["Producto", "Unid./Caja", "Stock Actual", "Pedido (Unid.)", "Cajas a Pedir"];
+      const headerRow = sh.addRow(headers);
+      for (let i = 1; i <= headers.length; i++) {
+        const cell = headerRow.getCell(i);
+        cell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1f2937" } };
+        aplicarBordesACelda(headerRow, i);
+      }
+      headerRow.height = 25;
+      
+      productos.forEach((p) => {
+        const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
+        const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, p.unidades_por_caja || 1);
+        
+        let textoCajas = "";
+        if (cajas > 0 && resto > 0) {
+          textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''} + ${resto} und`;
+        } else if (cajas > 0) {
+          textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''}`;
+        } else if (resto > 0) {
+          textoCajas = `${resto} unidades sueltas`;
+        } else {
+          textoCajas = "0";
+        }
+        
+        const row = sh.addRow([
+          p.nombre, 
+          p.unidades_por_caja || 1, 
+          p.stock, 
+          pedidoUnidades, 
+          textoCajas
+        ]);
+        
+        for (let i = 1; i <= NUM_COLUMNAS; i++) {
+          aplicarBordesACelda(row, i);
+        }
+        
+        if (pedidoUnidades > 0) {
+          const cellPedido = row.getCell(4);
+          cellPedido.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+          cellPedido.font = { color: { argb: "FFef4444" }, bold: true };
+          
+          const cellCajas = row.getCell(5);
+          cellCajas.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
+          cellCajas.font = { color: { argb: "FFf97316" }, bold: true };
+        }
+        
+        if (p.stock <= p.stock_minimo) {
+          const cellStock = row.getCell(3);
+          cellStock.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+          cellStock.font = { color: { argb: "FFef4444" }, bold: true };
+        }
+      });
+      
+      const totalStock = productos.reduce((sum, p) => sum + p.stock, 0);
+      const totalPedidosUnidades = productos.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
+      const totalCajas = productos.reduce((sum, p) => {
+        const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
+        const { cajas } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
+        return sum + cajas;
+      }, 0);
+      
+      const totalRow = sh.addRow(["TOTALES", "", totalStock, totalPedidosUnidades, `${totalCajas} cajas`]);
+      for (let i = 1; i <= NUM_COLUMNAS; i++) {
+        const cell = totalRow.getCell(i);
+        cell.font = { bold: true };
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFe5e7eb" } };
+        aplicarBordesACelda(totalRow, i);
+      }
+      
+      sh.columns = [
+        { width: 35 },
+        { width: 15 },
+        { width: 15 },
+        { width: 18 },
+        { width: 30 }
+      ];
+      
+      const buf = await wb.xlsx.writeBuffer();
+      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+      const url = window.URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `inventario_${new Date().toLocaleDateString("es-CO").replace(/\//g, "-")}.xlsx`;
+      a.click();
+      window.URL.revokeObjectURL(url);
+      
+      mostrarNotificacion('success', "✅ Reporte Excel generado exitosamente");
+    } catch (error) {
+      console.error("Error al exportar:", error);
+      mostrarNotificacion('error', "❌ Error al generar el reporte Excel");
+    }
+  };
 
   const now = new Date();
   const hora = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
@@ -2818,7 +2676,7 @@ export default function Home() {
       
       <header className="bg-[#0f1117] border-b border-[#2a2a3e] px-6 py-4 flex items-center justify-between sticky top-0 z-50 shadow-lg">
         <div className="flex items-center gap-4">
-          <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 flex items-center justify-center text-xl shadow-md">🍺</div>
+          <div className="w-10 h-10 rounded-xl bg-gradient-to-r from-amber-500 to-amber-600 flex items-center justify-center text-xl shadow-md"></div>
           <div>
             <h1 className="text-xl font-bold bg-gradient-to-r from-amber-400 to-amber-600 bg-clip-text text-transparent">INVENTARIO</h1>
             <p className="text-xs text-slate-400">Sistema profesional de control de inventario</p>
@@ -2848,7 +2706,7 @@ export default function Home() {
               <div className="w-9 h-9 rounded-xl bg-amber-500/20 flex items-center justify-center text-lg"></div>
               <div>
                 <div className="text-sm font-semibold text-white">INVENTARIO</div>
-                <div className="text-[10px] text-slate-500">Version 2.0</div>
+                <div className="text-[10px] text-slate-500">Version 3.0</div>
               </div>
             </div>
           </div>
