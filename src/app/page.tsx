@@ -2312,140 +2312,270 @@ export default function Home() {
 
   // ==================== FUNCIÓN DE EXPORTACIÓN A EXCEL ====================
   const descargarExcel = async () => {
-    try {
-      const wb = new ExcelJS.Workbook();
-      const sh = wb.addWorksheet("Inventario");
+  try {
+    const wb = new ExcelJS.Workbook();
+    const sh = wb.addWorksheet("Inventario");
+    
+    // Función para obtener el nombre comercial según la cantidad de unidades
+    const getNombreEmpaque = (unidades: number): string => {
+      switch (unidades) {
+        case 6: return "Sixpack";
+        case 12: return "Paca";
+        case 24: return "Paca";
+        case 30: return "Caja";
+        case 35: return "Caja 35";
+        case 38: return "Caja 38";
+        case 48: return "Pallet";
+        default: return `${unidades} und/paquete`;
+      }
+    };
+    
+    // Título principal
+    const tituloRow = sh.addRow(["INFORME DE INVENTARIO"]);
+    tituloRow.font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
+    tituloRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfbbf24" } };
+    tituloRow.height = 30;
+    sh.mergeCells(`A${tituloRow.number}:E${tituloRow.number}`);
+    
+    // Fecha de generación
+    const fechaRow = sh.addRow([`Fecha de generación: ${new Date().toLocaleString("es-CO")}`]);
+    fechaRow.font = { italic: true, size: 11, color: { argb: "FF666666" } };
+    sh.mergeCells(`A${fechaRow.number}:E${fechaRow.number}`);
+    
+    // Usuario que generó el reporte
+    const usuarioRow = sh.addRow([`Generado por: ${usuario?.nombre || "Bartender"}`]);
+    usuarioRow.font = { italic: true, size: 11, color: { argb: "FF666666" } };
+    sh.mergeCells(`A${usuarioRow.number}:E${usuarioRow.number}`);
+    
+    sh.addRow([]);
+    
+    // ENCABEZADOS - AHORA CON 5 COLUMNAS
+    const headers = ["Producto", "Formato de compra", "Stock Actual", "Pedido (Unid.)", "Pedido (cajas)"];
+    const headerRow = sh.addRow(headers);
+    headerRow.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    headerRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1f2937" } };
+    headerRow.height = 25;
+    
+    // DATOS DE PRODUCTOS
+    productos.forEach((p) => {
+      const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
+      const unidadesPorCaja = p.unidades_por_caja || 1;
+      const nombreEmpaque = getNombreEmpaque(unidadesPorCaja);
+      const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, unidadesPorCaja);
       
-      const NUM_COLUMNAS = 5;
+      let textoCajas = "";
+      if (cajas > 0 && resto > 0) {
+        textoCajas = `${cajas} ${nombreEmpaque}${cajas !== 1 ? 's' : ''} + ${resto} und`;
+      } else if (cajas > 0) {
+        textoCajas = `${cajas} ${nombreEmpaque}${cajas !== 1 ? 's' : ''}`;
+      } else if (resto > 0) {
+        textoCajas = `${resto} unidades sueltas`;
+      } else {
+        textoCajas = "0";
+      }
       
-      const aplicarBordesACelda = (row: any, col: number) => {
-        const cell = row.getCell(col);
+      const row = sh.addRow([
+        p.nombre, 
+        nombreEmpaque, 
+        p.stock, 
+        pedidoUnidades, 
+        textoCajas
+      ]);
+      
+      if (pedidoUnidades > 0) {
+        row.getCell(4).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+        row.getCell(4).font = { color: { argb: "FFef4444" }, bold: true };
+        row.getCell(5).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
+        row.getCell(5).font = { color: { argb: "FFf97316" }, bold: true };
+      }
+      
+      if (p.stock <= p.stock_minimo) {
+        row.getCell(3).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+        row.getCell(3).font = { color: { argb: "FFef4444" }, bold: true };
+      }
+    });
+    
+    // TOTALES
+    const totalStock = productos.reduce((sum, p) => sum + p.stock, 0);
+    const totalPedidosUnidades = productos.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
+    const totalCajas = productos.reduce((sum, p) => {
+      const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
+      const { cajas } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
+      return sum + cajas;
+    }, 0);
+    
+    const totalRow = sh.addRow(["TOTALES", "", totalStock, totalPedidosUnidades, `${totalCajas} cajas`]);
+    totalRow.font = { bold: true };
+    totalRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFe5e7eb" } };
+    
+    sh.addRow([]);
+    
+    // RESULTADOS CLAVE
+    const resumenTitle = sh.addRow(["📊 RESULTADOS CLAVE"]);
+    resumenTitle.font = { bold: true, size: 14, color: { argb: "FFFFFFFF" } };
+    resumenTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF3b82f6" } };
+    sh.mergeCells(`A${resumenTitle.number}:E${resumenTitle.number}`);
+    
+    sh.addRow(["Total de productos en inventario", "", "", "", productos.length]);
+    sh.addRow(["Unidades totales en stock", "", "", "", totalStock]);
+    sh.addRow(["Unidades que deben pedirse", "", "", "", totalPedidosUnidades]);
+    sh.addRow(["Cajas totales a pedir", "", "", "", totalCajas]);
+    sh.addRow(["Productos con stock crítico", "", "", "", productos.filter(p => p.stock <= p.stock_minimo && p.stock > 0).length]);
+    sh.addRow(["Productos agotados (stock 0)", "", "", "", productos.filter(p => p.stock === 0).length]);
+    
+    sh.addRow([]);
+    
+    // PRODUCTOS CON STOCK CRÍTICO
+    const criticosTitle = sh.addRow(["⚠️ PRODUCTOS CON STOCK CRÍTICO"]);
+    criticosTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    criticosTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFef4444" } };
+    sh.mergeCells(`A${criticosTitle.number}:E${criticosTitle.number}`);
+    
+    const productosCriticos = productos.filter(p => p.stock <= p.stock_minimo);
+    if (productosCriticos.length > 0) {
+      const critHeader = sh.addRow(["Producto", "Formato", "Stock Actual", "Stock Mínimo", "Déficit"]);
+      critHeader.font = { bold: true };
+      critHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
+      
+      productosCriticos.forEach(p => {
+        const deficit = p.stock_minimo - p.stock;
+        const nombreEmpaque = getNombreEmpaque(p.unidades_por_caja || 1);
+        const deficitCajas = Math.ceil(deficit / (p.unidades_por_caja || 1));
+        sh.addRow([p.nombre, nombreEmpaque, p.stock, p.stock_minimo, `${deficit > 0 ? deficit : 0} und (${deficitCajas} ${nombreEmpaque}${deficitCajas !== 1 ? 's' : ''} aprox)`]);
+      });
+    } else {
+      const noCriticosRow = sh.addRow(["✅ No hay productos con stock crítico"]);
+      sh.mergeCells(`A${noCriticosRow.number}:E${noCriticosRow.number}`);
+    }
+    
+    sh.addRow([]);
+    
+    // PRODUCTOS QUE NECESITAN PEDIDO
+    const pedidoTitle = sh.addRow(["🛒 PRODUCTOS QUE NECESITAN PEDIDO"]);
+    pedidoTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    pedidoTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFf97316" } };
+    sh.mergeCells(`A${pedidoTitle.number}:E${pedidoTitle.number}`);
+    
+    const productosConPedido = productos.filter(p => calcularPedidoSugerido(p.stock, p.cantidad_base) > 0);
+    if (productosConPedido.length > 0) {
+      const pedHeader = sh.addRow(["Producto", "Formato", "Stock Actual", "Cantidad Base", "Pedido"]);
+      pedHeader.font = { bold: true };
+      pedHeader.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
+      
+      productosConPedido.forEach(p => {
+        const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
+        const nombreEmpaque = getNombreEmpaque(p.unidades_por_caja || 1);
+        const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, p.unidades_por_caja || 1);
+        
+        let textoPedido = "";
+        if (cajas > 0 && resto > 0) {
+          textoPedido = `${cajas} ${nombreEmpaque}${cajas !== 1 ? 's' : ''} + ${resto} und`;
+        } else if (cajas > 0) {
+          textoPedido = `${cajas} ${nombreEmpaque}${cajas !== 1 ? 's' : ''}`;
+        } else {
+          textoPedido = `${resto} und`;
+        }
+        
+        sh.addRow([p.nombre, nombreEmpaque, p.stock, p.cantidad_base, textoPedido]);
+      });
+      
+      sh.addRow([]);
+      const totalPedidoRow = sh.addRow(["TOTAL A PEDIR", "", "", `${totalPedidosUnidades} unidades`, `${totalCajas} cajas`]);
+      totalPedidoRow.font = { bold: true };
+      totalPedidoRow.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
+    } else {
+      const noPedidoRow = sh.addRow(["✅ Todos los productos tienen stock suficiente"]);
+      sh.mergeCells(`A${noPedidoRow.number}:E${noPedidoRow.number}`);
+    }
+    
+    sh.addRow([]);
+    
+    // GUÍA DE COMPRA RÁPIDA
+    const guiaTitle = sh.addRow(["📋 GUÍA DE COMPRA RÁPIDA"]);
+    guiaTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    guiaTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF10b981" } };
+    sh.mergeCells(`A${guiaTitle.number}:E${guiaTitle.number}`);
+    
+    const guiaHeader = sh.addRow(["Producto", "Formato", "Stock Actual", "Cantidad Base", "Pedir"]);
+    guiaHeader.font = { bold: true };
+    
+    productosConPedido.slice(0, 20).forEach(p => {
+      const faltante = calcularPedidoSugerido(p.stock, p.cantidad_base);
+      const nombreEmpaque = getNombreEmpaque(p.unidades_por_caja || 1);
+      const { cajas, resto } = calcularCajasNecesarias(faltante, p.unidades_por_caja || 1);
+      const textoPedido = cajas > 0 ? `${cajas} ${nombreEmpaque}${cajas !== 1 ? 's' : ''}${resto > 0 ? ` + ${resto} und` : ''}` : `${resto} und`;
+      sh.addRow([p.nombre, nombreEmpaque, p.stock, p.cantidad_base, textoPedido]);
+    });
+    
+    sh.addRow([]);
+    
+    // RESUMEN POR FORMATO DE EMPAQUE
+    const empaqueTitle = sh.addRow(["📦 RESUMEN POR FORMATO DE EMPAQUE"]);
+    empaqueTitle.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
+    empaqueTitle.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFc084fc" } };
+    sh.mergeCells(`A${empaqueTitle.number}:E${empaqueTitle.number}`);
+    
+    const empaqueHeader = sh.addRow(["Formato", "Cantidad de Productos", "Stock Total", "Cantidad a Pedir"]);
+    empaqueHeader.font = { bold: true };
+    
+    const empaques: Record<string, { productos: number; stock: number; pedido: number }> = {};
+    productos.forEach(p => {
+      const nombreEmpaque = getNombreEmpaque(p.unidades_por_caja || 1);
+      if (!empaques[nombreEmpaque]) {
+        empaques[nombreEmpaque] = { productos: 0, stock: 0, pedido: 0 };
+      }
+      empaques[nombreEmpaque].productos++;
+      empaques[nombreEmpaque].stock += p.stock;
+      empaques[nombreEmpaque].pedido += calcularPedidoSugerido(p.stock, p.cantidad_base);
+    });
+    
+    Object.entries(empaques).forEach(([formato, data]) => {
+      sh.addRow([formato, data.productos, data.stock, data.pedido]);
+    });
+    
+    sh.addRow([]);
+    
+    // Footer
+    const footerRow = sh.addRow([`Reporte generado por Sistema de Inventario - ${new Date().getFullYear()}`]);
+    footerRow.font = { italic: true, size: 10, color: { argb: "FF888888" } };
+    sh.mergeCells(`A${footerRow.number}:E${footerRow.number}`);
+    
+    // Ajustar ancho de columnas
+    sh.columns = [
+      { width: 35 },
+      { width: 18 },
+      { width: 15 },
+      { width: 18 },
+      { width: 35 }
+    ];
+    
+    // Agregar bordes
+    sh.eachRow(row => {
+      row.eachCell(cell => {
         cell.border = {
           top: { style: "thin" },
           left: { style: "thin" },
           bottom: { style: "thin" },
           right: { style: "thin" }
         };
-      };
-      
-      const tituloRow = sh.addRow(["INFORME DE INVENTARIO"]);
-      tituloRow.getCell(1).font = { bold: true, size: 16, color: { argb: "FFFFFFFF" } };
-      tituloRow.getCell(1).fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfbbf24" } };
-      tituloRow.height = 30;
-      sh.mergeCells(`A${tituloRow.number}:E${tituloRow.number}`);
-      aplicarBordesACelda(tituloRow, 1);
-      
-      const fechaRow = sh.addRow([`Fecha de generación: ${new Date().toLocaleString("es-CO")}`]);
-      fechaRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
-      sh.mergeCells(`A${fechaRow.number}:E${fechaRow.number}`);
-      aplicarBordesACelda(fechaRow, 1);
-      
-      const usuarioRow = sh.addRow([`Generado por: ${usuario?.nombre || "Bartender"}`]);
-      usuarioRow.getCell(1).font = { italic: true, size: 11, color: { argb: "FF666666" } };
-      sh.mergeCells(`A${usuarioRow.number}:E${usuarioRow.number}`);
-      aplicarBordesACelda(usuarioRow, 1);
-      
-      sh.addRow([]);
-      const filaVacia = sh.lastRow;
-      if (filaVacia) {
-        for (let i = 1; i <= NUM_COLUMNAS; i++) {
-          aplicarBordesACelda(filaVacia, i);
-        }
-      }
-      
-      const headers = ["Producto", "Unid./Caja", "Stock Actual", "Pedido (Unid.)", "Cajas a Pedir"];
-      const headerRow = sh.addRow(headers);
-      for (let i = 1; i <= headers.length; i++) {
-        const cell = headerRow.getCell(i);
-        cell.font = { bold: true, size: 12, color: { argb: "FFFFFFFF" } };
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF1f2937" } };
-        aplicarBordesACelda(headerRow, i);
-      }
-      headerRow.height = 25;
-      
-      productos.forEach((p) => {
-        const pedidoUnidades = calcularPedidoSugerido(p.stock, p.cantidad_base);
-        const { cajas, resto } = calcularCajasNecesarias(pedidoUnidades, p.unidades_por_caja || 1);
-        
-        let textoCajas = "";
-        if (cajas > 0 && resto > 0) {
-          textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''} + ${resto} und`;
-        } else if (cajas > 0) {
-          textoCajas = `${cajas} caja${cajas !== 1 ? 's' : ''}`;
-        } else if (resto > 0) {
-          textoCajas = `${resto} unidades sueltas`;
-        } else {
-          textoCajas = "0";
-        }
-        
-        const row = sh.addRow([
-          p.nombre, 
-          p.unidades_por_caja || 1, 
-          p.stock, 
-          pedidoUnidades, 
-          textoCajas
-        ]);
-        
-        for (let i = 1; i <= NUM_COLUMNAS; i++) {
-          aplicarBordesACelda(row, i);
-        }
-        
-        if (pedidoUnidades > 0) {
-          const cellPedido = row.getCell(4);
-          cellPedido.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-          cellPedido.font = { color: { argb: "FFef4444" }, bold: true };
-          
-          const cellCajas = row.getCell(5);
-          cellCajas.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfeedd5" } };
-          cellCajas.font = { color: { argb: "FFf97316" }, bold: true };
-        }
-        
-        if (p.stock <= p.stock_minimo) {
-          const cellStock = row.getCell(3);
-          cellStock.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFfee2e2" } };
-          cellStock.font = { color: { argb: "FFef4444" }, bold: true };
-        }
       });
-      
-      const totalStock = productos.reduce((sum, p) => sum + p.stock, 0);
-      const totalPedidosUnidades = productos.reduce((sum, p) => sum + calcularPedidoSugerido(p.stock, p.cantidad_base), 0);
-      const totalCajas = productos.reduce((sum, p) => {
-        const pedido = calcularPedidoSugerido(p.stock, p.cantidad_base);
-        const { cajas } = calcularCajasNecesarias(pedido, p.unidades_por_caja || 1);
-        return sum + cajas;
-      }, 0);
-      
-      const totalRow = sh.addRow(["TOTALES", "", totalStock, totalPedidosUnidades, `${totalCajas} cajas`]);
-      for (let i = 1; i <= NUM_COLUMNAS; i++) {
-        const cell = totalRow.getCell(i);
-        cell.font = { bold: true };
-        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FFe5e7eb" } };
-        aplicarBordesACelda(totalRow, i);
-      }
-      
-      sh.columns = [
-        { width: 35 },
-        { width: 15 },
-        { width: 15 },
-        { width: 18 },
-        { width: 30 }
-      ];
-      
-      const buf = await wb.xlsx.writeBuffer();
-      const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
-      const url = window.URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `inventario_${new Date().toLocaleDateString("es-CO").replace(/\//g, "-")}.xlsx`;
-      a.click();
-      window.URL.revokeObjectURL(url);
-      
-      mostrarNotificacion('success', "✅ Reporte Excel generado exitosamente");
-    } catch (error) {
-      console.error("Error al exportar:", error);
-      mostrarNotificacion('error', "❌ Error al generar el reporte Excel");
-    }
-  };
+    });
+    
+    const buf = await wb.xlsx.writeBuffer();
+    const blob = new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `inventario_${new Date().toLocaleDateString("es-CO").replace(/\//g, "-")}.xlsx`;
+    a.click();
+    window.URL.revokeObjectURL(url);
+    
+    mostrarNotificacion('success', "✅ Reporte Excel generado exitosamente");
+  } catch (error) {
+    console.error("Error al exportar:", error);
+    mostrarNotificacion('error', "❌ Error al generar el reporte Excel");
+  }
+};
 
   const now = new Date();
   const hora = now.toLocaleTimeString("es-CO", { hour: "2-digit", minute: "2-digit" });
